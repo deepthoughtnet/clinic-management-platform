@@ -11,6 +11,11 @@ public record AuditEventCommand(
         UUID actorAppUserId,
         OffsetDateTime occurredAt,
         String summary,
-        String detailsJson
+        String detailsJson,
+        AuditActorContext actorContext
 ) {
+    public AuditEventCommand(UUID tenantId, String entityType, UUID entityId, String action,
+                             UUID actorAppUserId, OffsetDateTime occurredAt, String summary, String detailsJson) {
+        this(tenantId, entityType, entityId, action, actorAppUserId, occurredAt, summary, detailsJson, null);
+    }
 }

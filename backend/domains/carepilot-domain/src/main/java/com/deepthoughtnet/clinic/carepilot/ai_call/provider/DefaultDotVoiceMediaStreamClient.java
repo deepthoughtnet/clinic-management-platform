@@ -81,6 +81,11 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
     }
 
     @Override
+    public void onPlaybackPreparationFailed(String providerCallId) {
+        inboundHandlers.forEach(handler -> handler.onPlaybackPreparationFailed(providerCallId));
+    }
+
+    @Override
     public boolean isConnected() {
         PreparedStream preparedStream = prepared.get();
         if (preparedStream != null && !preparedStream.socket().isInputClosed() && !preparedStream.socket().isOutputClosed()) return true;

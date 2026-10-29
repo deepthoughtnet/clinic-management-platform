@@ -76,6 +76,49 @@ class HealthcareAiReadOnlyToolGatewayTest {
     }
 
     @Test
+    void dateBasedGenericDoctorDiscoveryReturnsOnlyTenantDoctorsWithBookableSlots() {
+        PatientPortalService portal = mock(PatientPortalService.class);
+        AppointmentService appointments = mock(AppointmentService.class);
+        UUID tenant = UUID.randomUUID();
+        UUID availableDoctor = UUID.randomUUID();
+        UUID unavailableDoctor = UUID.randomUUID();
+        LocalDate requestedDate = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1);
+        when(portal.careAiDoctorsForTenant(tenant)).thenReturn(List.of(
+                new PatientPortalCareAiDoctorOption(availableDoctor.toString(), "Dr Available", "Pediatrics",
+                        UUID.randomUUID(), UUID.randomUUID(), tenant, "clinic", "Clinic"),
+                new PatientPortalCareAiDoctorOption(unavailableDoctor.toString(), "Dr Unavailable", "Pediatrics",
+                        UUID.randomUUID(), UUID.randomUUID(), tenant, "clinic", "Clinic")));
+        when(portal.doctorsForTenant(tenant)).thenReturn(List.of(
+                new PatientPortalDoctorResponse(availableDoctor.toString(), "Dr Available", "Pediatrics", null, null, null),
+                new PatientPortalDoctorResponse(unavailableDoctor.toString(), "Dr Unavailable", "Pediatrics", null, null, null)));
+        when(appointments.listSlots(tenant, availableDoctor, requestedDate, ZoneId.of("Asia/Kolkata")))
+                .thenReturn(List.of(new DoctorAvailabilitySlotRecord(availableDoctor, "Dr Available", requestedDate,
+                        LocalTime.of(10, 0), LocalTime.of(10, 30), DoctorAvailabilitySlotStatus.AVAILABLE,
+                        0, 1, true, DoctorAvailabilitySlotTimeState.FUTURE, false, false, true,
+                        null, null, null, null, null, null, null, null)));
+        when(appointments.listSlots(tenant, unavailableDoctor, requestedDate, ZoneId.of("Asia/Kolkata")))
+                .thenReturn(List.of());
+        HealthcareAiReadOnlyToolGateway gateway = new HealthcareAiReadOnlyToolGateway(
+                portal, mock(PublicCatalogFacade.class), mock(DiscoverReferenceDataService.class),
+                mock(ClinicProfileService.class), appointments, Clock.fixed(
+                        requestedDate.minusDays(1).atStartOfDay(ZoneId.of("Asia/Kolkata")).toInstant(),
+                        ZoneId.of("UTC")));
+        HealthcareAiExecutionContext context = new HealthcareAiExecutionContext(tenant, null, "GUEST_CALLER",
+                HealthcareAiChannel.VOICE, UUID.randomUUID(), null, null, "hi-IN");
+
+        var result = gateway.execute("FIND_DOCTOR", context,
+                new HealthcareAiReadOnlyToolGateway.ToolInput(null, "Pediatrics", null, null,
+                        null, requestedDate, QueryType.EFFECTIVE_DATE_AVAILABILITY, null,
+                        ZoneId.of("Asia/Kolkata"), 0));
+
+        assertEquals(1, result.candidateCount());
+        assertEquals("Dr Available", ((com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse)
+                ((List<?>) result.value()).getFirst()).doctorDisplayName());
+        verify(appointments).listSlots(tenant, availableDoctor, requestedDate, ZoneId.of("Asia/Kolkata"));
+        verify(appointments).listSlots(tenant, unavailableDoctor, requestedDate, ZoneId.of("Asia/Kolkata"));
+    }
+
+    @Test
     void voiceDoctorLookupReturnsGeneralMedicineDoctorAndSourceDiagnostics() {
         PatientPortalService portal = mock(PatientPortalService.class);
         UUID tenantId = UUID.randomUUID();

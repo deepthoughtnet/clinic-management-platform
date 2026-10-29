@@ -114,6 +114,17 @@ public class PatientService {
 
     @Transactional
     public PatientRecord create(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId) {
+        return createInternal(tenantId, command, actorAppUserId, null, null, null);
+    }
+
+    /** Creates a minimal guest record through the patient aggregate and records truthful Voice provenance. */
+    @Transactional
+    public PatientRecord createVoiceGuest(UUID tenantId, PatientUpsertCommand command, UUID interactionId) {
+        return createInternal(tenantId, command, null, "VOICE_GUEST_BOOKING", "VOICE", interactionId);
+    }
+
+    private PatientRecord createInternal(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId,
+            String registrationSource, String channel, UUID interactionId) {
         requireTenant(tenantId);
         validate(command);
         ensureMobileIsAvailable(tenantId, null, command.mobile());
@@ -131,7 +142,7 @@ public class PatientService {
                     actorAppUserId,
                     OffsetDateTime.now(),
                     "Created patient " + saved.getPatientNumber(),
-                    detailsJson(saved)
+                    detailsJson(saved, registrationSource, channel, interactionId)
             ));
 
             return toRecord(saved);
@@ -376,6 +387,10 @@ public class PatientService {
     }
 
     private String detailsJson(PatientEntity entity) {
+        return detailsJson(entity, null, null, null);
+    }
+
+    private String detailsJson(PatientEntity entity, String registrationSource, String channel, UUID interactionId) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", entity.getId());
         details.put("tenantId", entity.getTenantId());
@@ -385,6 +400,9 @@ public class PatientService {
         details.put("gender", entity.getGender());
         details.put("mobile", entity.getMobile());
         details.put("active", entity.isActive());
+        if (registrationSource != null) details.put("registrationSource", registrationSource);
+        if (channel != null) details.put("channel", channel);
+        if (interactionId != null) details.put("interactionId", interactionId);
         try {
             return objectMapper.writeValueAsString(details);
         } catch (JsonProcessingException ex) {

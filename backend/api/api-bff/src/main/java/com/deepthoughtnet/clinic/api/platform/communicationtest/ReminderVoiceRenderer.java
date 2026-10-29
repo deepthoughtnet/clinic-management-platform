@@ -24,52 +24,82 @@ public class ReminderVoiceRenderer {
     public ReminderVoiceRenderer(List<TextToSpeechProvider> providers, VoiceTestProperties properties) {
         this.providers = providers == null ? List.of() : List.copyOf(providers);
         this.properties = properties;
-        log.info("REMINDER_TTS_RESOLUTION availableProviders={} providerOrder={}",
-                this.providers.stream().map(TextToSpeechProvider::providerName).toList(),
-                properties == null ? List.of() : properties.getTts().getProviderOrder());
+        log.info("VOICE_TTS_CONFIGURATION englishProviderOrder=[elevenlabs,sarvam,piper,mock] "
+                        + "hindiProviderOrder=[sarvam,elevenlabs,piper,mock] "
+                        + "hinglishProviderOrder=[sarvam,elevenlabs,piper,mock] sarvamEnabled={} "
+                        + "sarvamModel={} sarvamSpeaker={} sarvamTargetLanguage={} sarvamSampleRate={} "
+                        + "sarvamTransport=REST sarvamReady={} elevenLabsEnabled={} piperEnabled={}",
+                properties != null && properties.getSarvam().isEnabled() && properties.getSarvam().isTtsEnabled(),
+                properties == null ? "bulbul:v4-flash" : properties.getSarvam().getTtsModel(),
+                properties == null ? "aparna_hi_customer" : properties.getSarvam().getTtsSpeaker(),
+                properties == null ? "hi-IN" : properties.getSarvam().getTtsLanguageCode(),
+                properties == null ? 16_000 : properties.getSarvam().getTtsSampleRate(), ready("sarvam"),
+                ready("elevenlabs"), ready("piper"));
     }
 
     public RenderedReminder render(String text, String language) {
-        List<TextToSpeechProvider> ordered = orderedProviders();
+        return render(text, inferPresentationMode(language), language);
+    }
+
+    public RenderedReminder render(String text, String presentationMode, String language) {
+        String mode = normalizePresentationMode(presentationMode, language);
+        List<String> desiredOrder = providerOrder(mode);
+        List<TextToSpeechProvider> ordered = orderedProviders(mode, true);
         if (ordered.isEmpty()) return new RenderedReminder(null, "TTS_NOT_CONFIGURED", null);
         boolean providerReady = false;
         String lastFailure = "TTS_PROVIDER_UNAVAILABLE";
         String locale = StringUtils.hasText(language) ? language.trim() : "en-IN";
-        for (TextToSpeechProvider provider : ordered) {
-            boolean ready;
-            try { ready = provider.isReady(); } catch (RuntimeException ex) { ready = false; }
+        TextToSpeechProvider selected = ordered.stream().filter(provider -> ready(provider.providerName())).findFirst().orElse(null);
+        log.info("VOICE_TTS_SELECTION presentationMode={} requestedLanguage={} providerOrder={} selectedProvider={} selectedProviderReady={}",
+                mode, locale, desiredOrder, selected == null ? "none" : providerKey(selected), selected != null);
+        for (int index = 0; index < ordered.size(); index++) {
+            TextToSpeechProvider provider = ordered.get(index);
+            boolean ready = ready(provider.providerName());
+            log.info("VOICE_TTS_PROVIDER_ATTEMPT provider={} presentationMode={} ready={}", providerKey(provider), mode, ready);
             if (!ready) continue;
             providerReady = true;
             long started = System.currentTimeMillis();
-            log.info("REMINDER_TTS_RESOLUTION requestedLanguage={} selectedProvider={} selectedProviderReady=true",
-                    locale, provider.providerName());
             try {
                 // Reminder transport needs a decodable PCM intermediate. This request-scoped
-                // preference does not alter the existing AIVA ElevenLabs default (MP3).
+                // preference leaves the provider's ordinary AIVA output format unchanged.
                 VoiceSynthesisResult result = provider.synthesize(new VoiceSynthesisRequest(null, text, locale, "pcm_16000"));
                 byte[] audio = result == null ? null : result.audioBytes();
                 if (audio == null || audio.length == 0) {
                     lastFailure = "TTS_AUDIO_INVALID";
+                    log.warn("VOICE_TTS_PROVIDER_FAILURE provider={} reason={} fallbackProvider={}",
+                            providerKey(provider), lastFailure, nextProvider(ordered, index));
                     continue;
                 }
                 String contentType = StringUtils.hasText(result.contentType()) && result.contentType().length() <= 80
                         ? result.contentType() : "application/octet-stream";
-                int sourceRate = contentType.toLowerCase(Locale.ROOT).contains("pcm") ? 16_000 : 0;
-                String format = sourceRate > 0 ? "PCM16" : contentType;
-                log.info("REMINDER_TTS_RESULT provider={} success=true audioBytes={} contentType={} format={} sampleRate={} elapsedMs={}",
-                        provider.providerName(), audio.length, contentType, format, sourceRate, System.currentTimeMillis() - started);
+                if ("sarvam".equals(providerKey(provider))) {
+                    // Validate this provider's requested Linear16 contract before
+                    // selecting it for playback, so invalid Sarvam output can fall
+                    // through to ElevenLabs without sending partial audio.
+                    ReminderAudioNormalizer.normalize(audio, contentType,
+                            properties == null ? 16_000 : properties.getSarvam().getTtsSampleRate());
+                }
+                int sourceRate = resolveSourceSampleRate(audio, contentType, providerKey(provider));
+                log.info("VOICE_TTS_PROVIDER_SUCCESS provider={} model={} speaker={} requestedSampleRate={} actualSampleRate={} "
+                                + "audioFormat={} audioBytes={} latencyMs={}",
+                        providerKey(provider), "sarvam".equals(providerKey(provider)) ? properties.getSarvam().getTtsModel() : "n/a",
+                        "sarvam".equals(providerKey(provider)) ? properties.getSarvam().getTtsSpeaker() : "n/a",
+                        "sarvam".equals(providerKey(provider)) ? properties.getSarvam().getTtsSampleRate() : 16_000,
+                        sourceRate > 0 ? sourceRate : "unknown", contentType, audio.length,
+                        System.currentTimeMillis() - started);
                 return new RenderedReminder(new SpeechSynthesisResult(audio, contentType, 0L), null, provider.providerName(), sourceRate);
             } catch (RuntimeException ex) {
                 lastFailure = "TTS_SYNTHESIS_FAILED";
-                log.warn("REMINDER_TTS_RESULT provider={} success=false failureCategory={} elapsedMs={}",
-                        provider.providerName(), lastFailure, System.currentTimeMillis() - started);
+                log.warn("VOICE_TTS_PROVIDER_FAILURE provider={} reason={} fallbackProvider={} latencyMs={}",
+                        providerKey(provider), safeFailureCategory(ex), nextProvider(ordered, index),
+                        System.currentTimeMillis() - started);
             }
         }
         return new RenderedReminder(null, providerReady ? lastFailure : "TTS_PROVIDER_UNAVAILABLE", null);
     }
 
     public Readiness readiness() {
-        List<TextToSpeechProvider> ordered = orderedProviders();
+        List<TextToSpeechProvider> ordered = orderedProviders("HINDI", false);
         for (TextToSpeechProvider provider : ordered) {
             try {
                 if (provider.isReady()) return new Readiness("READY", provider.providerName(), ordered.stream().map(TextToSpeechProvider::providerName).toList(), null);
@@ -80,21 +110,73 @@ public class ReminderVoiceRenderer {
                 ordered.isEmpty() ? "No deterministic TTS provider is configured." : "Configured TTS providers are unavailable.");
     }
 
-    private List<TextToSpeechProvider> orderedProviders() {
+    private List<TextToSpeechProvider> orderedProviders(String presentationMode, boolean allowMockFallback) {
         LinkedHashMap<String, TextToSpeechProvider> byName = new LinkedHashMap<>();
         for (TextToSpeechProvider provider : providers) {
-            if (provider != null && !isTestProvider(provider.providerName())) {
+            if (provider != null && (!isTestProvider(provider.providerName())
+                    || allowMockFallback && "mock".equals(providerKey(provider)))) {
                 byName.putIfAbsent(provider.providerName().toLowerCase(Locale.ROOT), provider);
             }
         }
         List<TextToSpeechProvider> ordered = new ArrayList<>();
-        List<String> configured = properties == null ? List.of() : properties.getTts().getProviderOrder();
+        List<String> configured = providerOrder(presentationMode);
         for (String name : configured == null ? List.<String>of() : configured) {
             TextToSpeechProvider provider = byName.remove(name.toLowerCase(Locale.ROOT));
             if (provider != null) ordered.add(provider);
         }
         ordered.addAll(byName.values());
         return ordered;
+    }
+
+    private List<String> providerOrder(String presentationMode) {
+        return "ENGLISH".equals(presentationMode)
+                ? List.of("elevenlabs", "sarvam", "piper", "mock")
+                : List.of("sarvam", "elevenlabs", "piper", "mock");
+    }
+
+    private String normalizePresentationMode(String mode, String language) {
+        if (StringUtils.hasText(mode)) {
+            String normalized = mode.trim().toUpperCase(Locale.ROOT);
+            if (List.of("ENGLISH", "HINDI", "HINGLISH").contains(normalized)) return normalized;
+        }
+        return inferPresentationMode(language);
+    }
+
+    private String inferPresentationMode(String language) {
+        return StringUtils.hasText(language) && language.trim().toLowerCase(Locale.ROOT).startsWith("en")
+                ? "ENGLISH" : "HINDI";
+    }
+
+    private boolean ready(String name) {
+        for (TextToSpeechProvider provider : providers) {
+            if (provider != null && providerKey(provider).equalsIgnoreCase(name)) {
+                try { return provider.isReady(); } catch (RuntimeException ignored) { return false; }
+            }
+        }
+        return false;
+    }
+
+    private String providerKey(TextToSpeechProvider provider) {
+        return provider == null || !StringUtils.hasText(provider.providerName())
+                ? "unknown" : provider.providerName().trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String nextProvider(List<TextToSpeechProvider> ordered, int index) {
+        return index + 1 < ordered.size() ? providerKey(ordered.get(index + 1)) : "none";
+    }
+
+    private String safeFailureCategory(RuntimeException ex) {
+        return ex == null ? "SYNTHESIS_FAILED" : ex.getClass().getSimpleName();
+    }
+
+    private int resolveSourceSampleRate(byte[] audio, String contentType, String provider) {
+        int knownRate = "sarvam".equals(provider) && properties != null
+                ? properties.getSarvam().getTtsSampleRate() : 16_000;
+        try {
+            return ReminderAudioNormalizer.normalize(audio, contentType, knownRate).sampleRate();
+        } catch (RuntimeException ignored) {
+            return 0;
+        }
     }
 
     private boolean isTestProvider(String name) {

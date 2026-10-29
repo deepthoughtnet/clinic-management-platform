@@ -38,6 +38,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.modulith.events.ModuleBusinessEventPublisher;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditActorContext;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -679,6 +680,13 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking, ZoneId bookingZone) {
+        return createScheduled(tenantId, command, actorAppUserId, allowOverbooking, bookingZone, null);
+    }
+
+    @Transactional
+    public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId,
+                                             boolean allowOverbooking, ZoneId bookingZone,
+                                             AuditActorContext actorContext) {
         requireTenant(tenantId);
         validateAppointment(command);
         Optional<DoctorAvailabilityEntity> lockedAvailability = lockAvailabilityForSlot(tenantId, command, command.type() == AppointmentType.WALK_IN ? null : command.appointmentTime());
@@ -709,7 +717,8 @@ public class AppointmentService {
                 actorAppUserId,
                 OffsetDateTime.now(),
                 "Created appointment",
-                detailsJson(saved)
+                detailsJson(saved),
+                actorContext
         ));
         String doctorDisplayName = doctorDisplayName(tenantId, saved.getDoctorUserId());
         moduleBusinessEventPublisher.publish(AppointmentBookedEvent.booked(
@@ -723,7 +732,8 @@ public class AppointmentService {
                 resolveBookingZone(bookingZone).getId(),
                 saved.getStatus() == null ? null : saved.getStatus().name(),
                 saved.getType() == null ? null : saved.getType().name(),
-                actorAppUserId
+                actorAppUserId,
+                actorContext
         ));
         return toRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
     }

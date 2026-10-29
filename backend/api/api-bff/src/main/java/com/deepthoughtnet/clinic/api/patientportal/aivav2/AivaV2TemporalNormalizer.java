@@ -27,10 +27,18 @@ final class AivaV2TemporalNormalizer {
             "\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+([a-z]+)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern MONTH_FIRST_DATE = Pattern.compile(
             "\\b([a-z]+)\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+(\\d{4}))?\\b", Pattern.CASE_INSENSITIVE);
-    private static final Map<String, DayOfWeek> DAYS = Map.of(
-            "monday", DayOfWeek.MONDAY, "tuesday", DayOfWeek.TUESDAY, "wednesday", DayOfWeek.WEDNESDAY,
-            "thursday", DayOfWeek.THURSDAY, "friday", DayOfWeek.FRIDAY, "saturday", DayOfWeek.SATURDAY,
-            "sunday", DayOfWeek.SUNDAY);
+    private static final Pattern WEEKDAY_TOKEN = Pattern.compile(
+            "(?iu)(?<![\\p{L}\\p{N}])(?:(next|this|अगले|नेक्स्ट)\\s+)?([\\p{L}\\p{M}]+)(?![\\p{L}\\p{N}])");
+    private static final Map<String, DayOfWeek> DAYS = Map.ofEntries(
+            Map.entry("monday", DayOfWeek.MONDAY), Map.entry("मंडे", DayOfWeek.MONDAY),
+            Map.entry("मन्डे", DayOfWeek.MONDAY), Map.entry("tuesday", DayOfWeek.TUESDAY),
+            Map.entry("ट्यूसडे", DayOfWeek.TUESDAY), Map.entry("wednesday", DayOfWeek.WEDNESDAY),
+            Map.entry("वेडनेसडे", DayOfWeek.WEDNESDAY), Map.entry("वेडन्सडे", DayOfWeek.WEDNESDAY),
+            Map.entry("thursday", DayOfWeek.THURSDAY), Map.entry("थर्सडे", DayOfWeek.THURSDAY),
+            Map.entry("friday", DayOfWeek.FRIDAY), Map.entry("फ्राइडे", DayOfWeek.FRIDAY),
+            Map.entry("saturday", DayOfWeek.SATURDAY), Map.entry("सैटरडे", DayOfWeek.SATURDAY),
+            Map.entry("sunday", DayOfWeek.SUNDAY), Map.entry("संडे", DayOfWeek.SUNDAY),
+            Map.entry("सन्डे", DayOfWeek.SUNDAY));
     private static final Map<String, Month> MONTHS = Map.ofEntries(
             Map.entry("january", Month.JANUARY), Map.entry("february", Month.FEBRUARY),
             Map.entry("march", Month.MARCH), Map.entry("april", Month.APRIL), Map.entry("may", Month.MAY),
@@ -128,9 +136,13 @@ final class AivaV2TemporalNormalizer {
         String relative = firstPresent(normalized,
                 "day after tomorrow", "parson", "परसों", "tomorrow", "kal", "कल", "today", "aaj", "आज");
         if (relative != null) return relative(relative, relative);
-        Matcher dayMatcher = Pattern.compile("(?:next|this|अगले|नेक्स्ट)?\\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
-                Pattern.CASE_INSENSITIVE).matcher(normalized);
-        if (dayMatcher.find()) return day(dayMatcher.group(), dayMatcher.group(1), normalized.startsWith("this "));
+        Matcher dayMatcher = WEEKDAY_TOKEN.matcher(normalized);
+        while (dayMatcher.find()) {
+            if (!DAYS.containsKey(dayMatcher.group(2))) continue;
+            boolean thisWeek = dayMatcher.group(1) != null
+                    && (dayMatcher.group(1).equalsIgnoreCase("this") || dayMatcher.group(1).equals("इस"));
+            return day(dayMatcher.group(), dayMatcher.group(2), thisWeek);
+        }
         return Optional.empty();
     }
 

@@ -94,6 +94,19 @@ class AivaResponseRendererTest {
     }
 
     @Test
+    void structuredVoiceFactsUseSpokenMonthNamesRatherThanAbbreviations() {
+        var slots = AivaStructuredResponse.of(ResponseType.AVAILABLE_SLOTS,
+                new AvailabilityPayload("Ravi Mehta", LocalDate.of(2026, 10, 22),
+                        List.of(new SlotFact("s1", LocalTime.of(9, 0), null, "09:00")), false, null), List.of());
+
+        assertThat(render(slots, "hi", ResponseStyle.STANDARD)).contains("22 अक्टूबर 2026");
+        assertThat(render(slots, "hi", ResponseStyle.HINGLISH)).contains("22 October 2026")
+                .doesNotMatch("(?s).*\\b22 Oct(?:\\s|$).*");
+        assertThat(render(slots, "en", ResponseStyle.STANDARD)).contains("22 October 2026")
+                .doesNotMatch("(?s).*\\b22 Oct(?:\\s|$).*");
+    }
+
+    @Test
     void emptyAvailabilityRendersAnExplicitNoSlotsMessageInAllThreeStyles() {
         var empty = AivaStructuredResponse.of(ResponseType.AVAILABLE_SLOTS,
                 new AvailabilityPayload("Doc Akshu Kumar", LocalDate.of(2026, 9, 24), List.of(), false, null), List.of());

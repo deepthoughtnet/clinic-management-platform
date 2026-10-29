@@ -73,6 +73,20 @@ class AiAivaV2ConversationDecisionGatewayTest {
     }
 
     @Test
+    void rejectsAiStartBookingProposalWhileAnActiveDraftExists() {
+        SessionProjection active = pendingContext();
+        when(orchestration.complete(any())).thenReturn(response("GEMINI", false, decisionJson()));
+
+        ConversationDecision decision = gateway.decide("I am not sure what to do next", "en", active);
+
+        assertThat(decision.operation()).isEqualTo(Operation.UNKNOWN);
+        assertThat(decision.provider()).isEqualTo("CONTEXT_INCOMPATIBLE_AI_PROPOSAL");
+        assertThat(active.activeDraft()).isNotNull();
+        assertThat(active.activeDraft().revision()).isEqualTo(1L);
+        verify(orchestration).complete(any());
+    }
+
+    @Test
     void activeGreetingUsesDeterministicPresenceWithoutCallingSemanticProvider() {
         for (String[] sample : new String[][]{{"Hi", "en"}, {"Hi AIVA", "en"}, {"नमस्ते", "hi"}, {"Namaste AIVA", "hi"}}) {
             ConversationDecision decision = gateway.decide(sample[0], sample[1], pendingContext());
@@ -1032,7 +1046,7 @@ class AiAivaV2ConversationDecisionGatewayTest {
     }
 
     @Test
-    void activeBookingContextIncludesBoundedDraftValuesAndPendingProviderFieldForSemanticSpecialty() {
+    void unresolvedSpecialtyEvidenceUsesAiWithBoundedActiveBookingContext() {
         Instant now = Instant.parse("2026-09-10T00:00:00Z");
         BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), "tenant", null, null,
                 LocalDate.of(2026, 9, 22), null, null, null, null,
@@ -1045,7 +1059,9 @@ class AiAivaV2ConversationDecisionGatewayTest {
                  "responseLanguage":"hi","confidence":0.95}
                 """));
 
-        ConversationDecision decision = gateway.decide("General Medicine", "hi", context);
+        // A canonical specialty is resolved deterministically. Use an unresolved
+        // description here so this test continues to exercise the bounded AI fallback.
+        ConversationDecision decision = gateway.decide("For routine health concerns", "hi", context);
 
         ArgumentCaptor<com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest> captor =
                 ArgumentCaptor.forClass(com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest.class);
@@ -1113,7 +1129,7 @@ class AiAivaV2ConversationDecisionGatewayTest {
         ConversationDecision decision = gateway.decide("Book an appointment with Dr. Akshu Kumar tomorrow.", "en", emptyContext());
 
         assertThat(decision.operation()).isEqualTo(Operation.START_BOOKING);
-        assertThat(decision.bookingPatch().doctorText().value()).isEqualTo("Dr. Akshu Kumar");
+        assertThat(decision.bookingPatch().doctorText().value()).isEqualTo("Akshu Kumar");
         // The adapter's clinic-local resolution of "tomorrow" outranks a conflicting provider date.
         assertThat(decision.bookingPatch().dateExpression().value()).isEqualTo("2026-09-11");
     }

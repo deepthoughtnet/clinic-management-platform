@@ -6,6 +6,8 @@ import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -37,6 +39,8 @@ import org.springframework.web.client.RestTemplate;
 public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
     private static final Logger log = LoggerFactory.getLogger(SarvamTextToSpeechProvider.class);
     private static final String CONFIGURED_PROVIDER_KEY = "sarvam";
+    private static final String OUTPUT_AUDIO_CODEC = "linear16";
+    private static final String PCM_CONTENT_TYPE = "audio/L16";
 
     private final VoiceTestProperties properties;
     private final RestTemplate restTemplate;
@@ -94,14 +98,13 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
         }
         String language = resolveLanguage(request.language());
         String speaker = resolveSpeaker();
+        String model = properties.getSarvam().getTtsModel();
+        int sampleRate = properties.getSarvam().getTtsSampleRate();
+        double pace = properties.getSarvam().getTtsPace();
         String endpoint = endpointUrl(properties.getSarvam().getTtsPath());
         Instant started = Instant.now();
-        log.info("VOICE_PROVIDER_TRACE provider=sarvam type=TTS speaker={} language={}", speaker, language);
-        log.info("voice.tts.request provider=sarvam endpoint={} language={} speaker={} textChars={}",
-                endpoint,
-                language,
-                speaker,
-                request.text() == null ? 0 : request.text().length());
+        log.info("VOICE_TTS_SARVAM_REQUEST model={} speaker={} targetLanguage={} pace={} requestedSampleRate={} transport=REST textChars={}",
+                model, speaker, language, pace, sampleRate, request.text() == null ? 0 : request.text().length());
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setAccept(List.of(new MediaType("audio", "*"), MediaType.APPLICATION_JSON));
@@ -112,8 +115,12 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
 
             Map<String, Object> payload = Map.of(
                     "text", request.text(),
-                    "language", language,
-                    "speaker", speaker
+                    "language_code", language,
+                    "model", model,
+                    "speaker", speaker,
+                    "pace", pace,
+                    "speech_sample_rate", sampleRate,
+                    "output_audio_codec", OUTPUT_AUDIO_CODEC
             );
 
             ResponseEntity<byte[]> response = restTemplate.exchange(
@@ -123,30 +130,38 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
                     byte[].class
             );
             VoiceSynthesisResult result = toResult(response);
-            log.info("voice.tts.complete provider=sarvam latencyMs={} audioBytes={}",
-                    Duration.between(started, Instant.now()).toMillis(),
-                    result.audioBytes() == null ? 0 : result.audioBytes().length);
+            log.info("VOICE_TTS_SARVAM_SUCCESS model={} speaker={} requestedSampleRate={} actualSampleRate={} outputFormat={} audioBytes={} latencyMs={}",
+                    model, speaker, sampleRate, audioSampleRate(result, sampleRate), OUTPUT_AUDIO_CODEC,
+                    result.audioBytes() == null ? 0 : result.audioBytes().length,
+                    Duration.between(started, Instant.now()).toMillis());
             return result;
         } catch (HttpStatusCodeException ex) {
-            log.warn("voice.tts.failed provider=sarvam status={} endpoint={} reason={} body={}",
+            log.warn("VOICE_TTS_SARVAM_FAILURE status={} errorCategory={} latencyMs={}",
                     ex.getStatusCode().value(),
-                    endpoint,
-                    ex.getMessage(),
-                    summarize(ex.getResponseBodyAsString()));
-            throw new IllegalStateException("Sarvam synthesis failed: " + extractReason(ex), ex);
+                    "HTTP_STATUS",
+                    Duration.between(started, Instant.now()).toMillis());
+            throw new IllegalStateException("Sarvam synthesis failed.", ex);
         } catch (RestClientException ex) {
-            log.warn("voice.tts.failed provider=sarvam endpoint={} exception={} reason={}",
-                    endpoint,
-                    ex.getClass().getSimpleName(),
-                    rootCauseMessage(ex));
-            throw new IllegalStateException("Sarvam synthesis failed: " + rootCauseMessage(ex), ex);
+            log.warn("VOICE_TTS_SARVAM_FAILURE status=unavailable errorCategory={} latencyMs={}",
+                    ex.getClass().getSimpleName(), Duration.between(started, Instant.now()).toMillis());
+            throw new IllegalStateException("Sarvam synthesis failed.", ex);
         } catch (Exception ex) {
-            log.warn("voice.tts.failed provider=sarvam endpoint={} exception={} reason={}",
-                    endpoint,
-                    ex.getClass().getSimpleName(),
-                    rootCauseMessage(ex));
-            throw new IllegalStateException("Sarvam synthesis failed: " + rootCauseMessage(ex), ex);
+            log.warn("VOICE_TTS_SARVAM_FAILURE status=unavailable errorCategory={} latencyMs={}",
+                    ex.getClass().getSimpleName(), Duration.between(started, Instant.now()).toMillis());
+            throw new IllegalStateException("Sarvam synthesis failed.", ex);
         }
+    }
+
+    private int audioSampleRate(VoiceSynthesisResult result, int requestedSampleRate) {
+        byte[] audio = result == null ? null : result.audioBytes();
+        if (audio != null && audio.length >= 28 && audio[0] == 'R' && audio[1] == 'I'
+                && audio[2] == 'F' && audio[3] == 'F') {
+            return ByteBuffer.wrap(audio, 24, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        }
+        return result != null && result.contentType() != null
+                && (result.contentType().toLowerCase(Locale.ROOT).contains("pcm")
+                || result.contentType().toLowerCase(Locale.ROOT).contains("l16"))
+                ? requestedSampleRate : 0;
     }
 
     private VoiceSynthesisResult toResult(ResponseEntity<byte[]> response) {
@@ -155,8 +170,11 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
         log.info("voice.tts.response provider=sarvam contentType={} sizeBytes={}",
                 contentType == null ? null : contentType.toString(),
                 body == null ? 0 : body.length);
+        if (body != null && body.length > 0 && isLinear16ContentType(contentType)) {
+            return linear16Result(body);
+        }
         if (body != null && body.length > 0 && isAudioContentType(contentType)) {
-            return new VoiceSynthesisResult(body, contentType.toString(), providerName(), null);
+            throw new IllegalStateException("Sarvam returned an unexpected audio codec.");
         }
         String responseText = body == null ? null : new String(body, StandardCharsets.UTF_8).trim();
         if (StringUtils.hasText(responseText)) {
@@ -169,10 +187,7 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
                         log.info("voice.tts.json_audio_field provider=sarvam fieldPath={} decodedBytes={}",
                                 payload.fieldPath(),
                                 payload.audioBytes().length);
-                        return new VoiceSynthesisResult(payload.audioBytes(),
-                                resolvePlayableAudioContentType(contentType),
-                                providerName(),
-                                null);
+                        return linear16Result(payload.audioBytes());
                     }
                 } catch (Exception ignored) {
                     // fall back to text interpretation below
@@ -180,11 +195,18 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
             } else {
                 byte[] decoded = decodeBase64(responseText);
                 if (decoded != null && decoded.length > 0) {
-                    return new VoiceSynthesisResult(decoded, resolvePlayableAudioContentType(contentType), providerName(), null);
+                    return linear16Result(decoded);
                 }
             }
         }
         throw new IllegalStateException("Sarvam returned an empty audio response.");
+    }
+
+    private VoiceSynthesisResult linear16Result(byte[] audio) {
+        if (audio == null || audio.length == 0 || audio.length % 2 != 0) {
+            throw new IllegalStateException("Sarvam returned malformed Linear16 audio.");
+        }
+        return new VoiceSynthesisResult(audio, PCM_CONTENT_TYPE, providerName(), null);
     }
 
     private AudioPayload findAudioPayload(JsonNode node, String path) {
@@ -265,6 +287,13 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
                 && "audio".equalsIgnoreCase(contentType.getType());
     }
 
+    private boolean isLinear16ContentType(MediaType contentType) {
+        if (contentType == null) return false;
+        String value = contentType.toString().toLowerCase(Locale.ROOT);
+        return value.startsWith("audio/l16") || value.startsWith("audio/pcm")
+                || value.startsWith("application/octet-stream");
+    }
+
     private byte[] decodeBase64(String value) {
         if (!StringUtils.hasText(value)) {
             return null;
@@ -277,7 +306,6 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
     }
 
     private String resolveLanguage(String requestLanguage) {
-        String configuredLanguage = configuredResponseLanguage();
         if (StringUtils.hasText(requestLanguage)) {
             String normalized = requestLanguage.trim();
             if (!"auto".equalsIgnoreCase(normalized) && !"auto-detect".equalsIgnoreCase(normalized)) {
@@ -285,14 +313,12 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
                     return "hi-IN";
                 }
                 if (normalized.toLowerCase(Locale.ROOT).startsWith("en")) {
-                    if (StringUtils.hasText(configuredLanguage) && configuredLanguage.toLowerCase(Locale.ROOT).startsWith("hi")) {
-                        return configuredLanguage;
-                    }
                     return "en-IN";
                 }
                 return normalized;
             }
         }
+        String configuredLanguage = properties.getSarvam().getTtsLanguageCode();
         return StringUtils.hasText(configuredLanguage) ? configuredLanguage : "hi-IN";
     }
 
@@ -301,25 +327,18 @@ public class SarvamTextToSpeechProvider implements TextToSpeechProvider {
         if (StringUtils.hasText(speaker)) {
             return speaker.trim();
         }
-        speaker = propertyOrEnv("AIVA_DEFAULT_VOICE");
+        // The typed Sarvam property owns this provider. Keep the legacy shared
+        // voice setting as a fallback only, so it cannot override this default.
+        speaker = properties.getSarvam().getTtsSpeaker();
         if (StringUtils.hasText(speaker)) {
             return speaker.trim();
         }
-        return "shubh";
+        speaker = propertyOrEnv("AIVA_DEFAULT_VOICE");
+        return StringUtils.hasText(speaker) ? speaker.trim() : "aparna_hi_customer";
     }
 
     private String propertyOrEnv(String key) {
         return environment == null ? null : environment.getProperty(key);
-    }
-
-    private String resolvePlayableAudioContentType(MediaType responseContentType) {
-        if (responseContentType != null
-                && StringUtils.hasText(responseContentType.toString())
-                && responseContentType.getType() != null
-                && "audio".equalsIgnoreCase(responseContentType.getType())) {
-            return responseContentType.toString();
-        }
-        return "audio/mpeg";
     }
 
     private String extractReason(HttpStatusCodeException ex) {

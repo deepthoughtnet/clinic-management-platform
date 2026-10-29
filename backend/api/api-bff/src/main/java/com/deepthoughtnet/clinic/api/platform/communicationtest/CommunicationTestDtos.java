@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import java.util.List;
+import java.util.Map;
 
 public final class CommunicationTestDtos {
     private CommunicationTestDtos() {}
@@ -32,8 +33,28 @@ public final class CommunicationTestDtos {
             String ttsProvider,
             OffsetDateTime startedAt,
             OffsetDateTime completedAt,
-            boolean closing
-    ) {}
+            boolean closing,
+            Map<String, Object> runtimeDiagnostics
+    ) {
+        public InboundVoiceTurnDiagnostic(int turnNumber, String callerTranscript, String sttProvider,
+                String detectedIntent, String selectedTool, String toolInputSpeciality, int toolResultCount,
+                String toolResultSummary, String toolExecutionStatus, String policyDecision, String aivaResponseText,
+                String ttsText, String ttsProvider, OffsetDateTime startedAt, OffsetDateTime completedAt,
+                boolean closing) {
+            this(turnNumber, callerTranscript, sttProvider, detectedIntent, selectedTool, toolInputSpeciality,
+                    toolResultCount, toolResultSummary, toolExecutionStatus, policyDecision, aivaResponseText,
+                    ttsText, ttsProvider, startedAt, completedAt, closing, Map.of());
+        }
+
+        public InboundVoiceTurnDiagnostic {
+            if (runtimeDiagnostics == null || runtimeDiagnostics.isEmpty()) runtimeDiagnostics = Map.of();
+            else {
+                java.util.Map<String, Object> safe = new java.util.LinkedHashMap<>(runtimeDiagnostics);
+                safe.entrySet().removeIf(entry -> entry.getValue() == null);
+                runtimeDiagnostics = Map.copyOf(safe);
+            }
+        }
+    }
 
     public record TestRequest(
             @NotBlank String recipient,
@@ -152,6 +173,11 @@ public final class CommunicationTestDtos {
             return aivaSessionId == null ? null : "AIVA_V2";
         }
 
+        @JsonProperty("aivaBuildIdentity")
+        public Map<String, String> aivaBuildIdentity() {
+            return AivaVoiceBuildIdentity.current();
+        }
+
         public InboundVoiceResult(String callId, String callerPhoneNumber, String didNumber, String direction,
                 String status, String language, String sttProvider, String firstTranscript,
                 OffsetDateTime receivedAt, OffsetDateTime answeredAt, OffsetDateTime capturedAt,
@@ -221,16 +247,45 @@ public final class CommunicationTestDtos {
                 String tool, String response, String callerTranscript, String turnSttProvider,
                 String policyDecision, String toolExecutionStatus, String toolInputSpeciality,
                 int toolResultCount, String toolResultSummary) {
+            return withAivaTurn(sessionId, nextTurnCount, intent, tool, response, callerTranscript,
+                    turnSttProvider, policyDecision, toolExecutionStatus, toolInputSpeciality,
+                    toolResultCount, toolResultSummary, Map.of());
+        }
+
+        public InboundVoiceResult withAivaTurn(String sessionId, int nextTurnCount, String intent,
+                String tool, String response, String callerTranscript, String turnSttProvider,
+                String policyDecision, String toolExecutionStatus, String toolInputSpeciality,
+                int toolResultCount, String toolResultSummary, Map<String, Object> runtimeDiagnostics) {
             return new InboundVoiceResult(callId, callerPhoneNumber, didNumber, direction, status, language,
                     sttProvider, firstTranscript, receivedAt, answeredAt, capturedAt, endedAt, hangupCause,
                     websocketStatus, normalizedDid, communicationChannelId, tenantId, clinicId, locationId,
                     provider, routingStatus, routingFailureReason, normalizedCallerPhone,
                     patientIdentificationStatus, identifiedPatientId, identifiedPatientName, candidateCount,
-                    identificationSource, interactionId, conversationPartyType, sessionId, "AIVA_READ_ONLY",
+                    identificationSource, interactionId, conversationPartyType, sessionId,
+                    String.valueOf(runtimeDiagnostics == null ? "READ_ONLY_DISCOVERY"
+                            : runtimeDiagnostics.getOrDefault("transactionMode", "READ_ONLY_DISCOVERY")),
                     nextTurnCount, intent, tool, response, appendTurn(new InboundVoiceTurnDiagnostic(
                             nextTurnCount, callerTranscript, turnSttProvider, intent, tool,
                             toolInputSpeciality, toolResultCount, toolResultSummary, toolExecutionStatus, policyDecision, response,
-                            null, null, OffsetDateTime.now(), null, false)));
+                            null, null, OffsetDateTime.now(), null, false, runtimeDiagnostics)));
+        }
+
+        public InboundVoiceResult withAivaRuntimeDiagnostics(Map<String, Object> diagnostics) {
+            if (conversationTurns.isEmpty()) return this;
+            List<InboundVoiceTurnDiagnostic> updated = new java.util.ArrayList<>(conversationTurns);
+            InboundVoiceTurnDiagnostic prior = updated.get(updated.size() - 1);
+            updated.set(updated.size() - 1, new InboundVoiceTurnDiagnostic(prior.turnNumber(), prior.callerTranscript(),
+                    prior.sttProvider(), prior.detectedIntent(), prior.selectedTool(), prior.toolInputSpeciality(),
+                    prior.toolResultCount(), prior.toolResultSummary(), prior.toolExecutionStatus(),
+                    prior.policyDecision(), prior.aivaResponseText(), prior.ttsText(), prior.ttsProvider(),
+                    prior.startedAt(), prior.completedAt(), prior.closing(), diagnostics));
+            return new InboundVoiceResult(callId, callerPhoneNumber, didNumber, direction, status, language,
+                    sttProvider, firstTranscript, receivedAt, answeredAt, capturedAt, endedAt, hangupCause,
+                    websocketStatus, normalizedDid, communicationChannelId, tenantId, clinicId, locationId,
+                    provider, routingStatus, routingFailureReason, normalizedCallerPhone,
+                    patientIdentificationStatus, identifiedPatientId, identifiedPatientName, candidateCount,
+                    identificationSource, interactionId, conversationPartyType, aivaSessionId, conversationMode,
+                    turnCount, lastDetectedIntent, lastTool, lastAivaResponse, List.copyOf(updated));
         }
 
         public InboundVoiceResult withWebsocketStatus(String nextWebsocketStatus) {
@@ -261,7 +316,7 @@ public final class CommunicationTestDtos {
                     prior.sttProvider(), prior.detectedIntent(), prior.selectedTool(), prior.toolInputSpeciality(),
                     prior.toolResultCount(), prior.toolResultSummary(), prior.toolExecutionStatus(),
                     prior.policyDecision(), prior.aivaResponseText(), ttsText, ttsProvider, prior.startedAt(),
-                    OffsetDateTime.now(), closing));
+                    OffsetDateTime.now(), closing, prior.runtimeDiagnostics()));
             return new InboundVoiceResult(callId, callerPhoneNumber, didNumber, direction, status, language,
                     sttProvider, firstTranscript, receivedAt, answeredAt, capturedAt, endedAt, hangupCause,
                     websocketStatus, normalizedDid, communicationChannelId, tenantId, clinicId, locationId,
@@ -279,7 +334,7 @@ public final class CommunicationTestDtos {
                     prior.sttProvider(), prior.detectedIntent(), prior.selectedTool(), prior.toolInputSpeciality(),
                     prior.toolResultCount(), prior.toolResultSummary(), toolExecutionStatus,
                     policyDecision, prior.aivaResponseText(), prior.ttsText(), prior.ttsProvider(), prior.startedAt(),
-                    prior.completedAt(), prior.closing()));
+                    prior.completedAt(), prior.closing(), prior.runtimeDiagnostics()));
             return new InboundVoiceResult(callId, callerPhoneNumber, didNumber, direction, status, language,
                     sttProvider, firstTranscript, receivedAt, answeredAt, capturedAt, endedAt, hangupCause,
                     websocketStatus, normalizedDid, communicationChannelId, tenantId, clinicId, locationId,

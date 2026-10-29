@@ -207,6 +207,25 @@ public class CommunicationTestDotVoiceInboundHandler implements DotVoiceInboundM
     }
 
     @Override
+    public void onPlaybackPreparationFailed(String providerCallId) {
+        ConversationRuntime runtime = inboundConversations.get(providerCallId);
+        if (runtime == null) return;
+        runtime.botSpeaking.set(false);
+        if (runtime.state == VoiceConversationState.CLOSING) return;
+        synchronized (runtime) {
+            runtime.buffer.reset();
+            runtime.speechDetected = false;
+            runtime.speechBytes = 0;
+            runtime.lastSpeechAt = 0;
+            runtime.chunkCount = 0;
+            runtime.cumulativeBytes = 0;
+            runtime.state = VoiceConversationState.LISTENING;
+        }
+        service.markInboundListening(providerCallId);
+        log.info("DOTVOICE_INBOUND_LISTENING_STARTED callId={} reason=PLAYBACK_PREPARATION_FAILED", providerCallId);
+    }
+
+    @Override
     public void onStreamStop(String providerCallId, String cause) {
         ConversationRuntime runtime = conversations.get(providerCallId);
         boolean inbound = false;

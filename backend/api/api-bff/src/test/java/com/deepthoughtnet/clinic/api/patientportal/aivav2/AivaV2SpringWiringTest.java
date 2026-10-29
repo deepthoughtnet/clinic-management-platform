@@ -26,6 +26,7 @@ class AivaV2SpringWiringTest {
                     AivaV2BookingTools.class, AivaV2TransactionalKernel.class,
                     AivaV2AppointmentLookupTool.class, AivaV2CancellationTool.class,
                     AivaV2RescheduleTools.class,
+                    AivaTransactionCapabilityGate.class, AivaV2TransactionalExecutionBoundary.class,
                     AivaResponseRenderer.class,
                     EnglishLanguageAdapter.class, HindiLanguageAdapter.class, LanguageAdapterRegistry.class,
                     AivaV2ConversationService.class, AivaV2Controller.class);
@@ -33,6 +34,15 @@ class AivaV2SpringWiringTest {
     @Test
     void endpointBeanIsAbsentByDefault() {
         runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(AivaV2Controller.class);
+            assertThat(context).hasSingleBean(AivaV2ConversationService.class);
+        });
+    }
+
+    @Test
+    void endpointBeanIsAbsentWhenSharedChannelIsExplicitlyDisabled() {
+        runner.withPropertyValues("aiva.v2.enabled=false").run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context).doesNotHaveBean(AivaV2Controller.class);
             assertThat(context).hasSingleBean(AivaV2ConversationService.class);

@@ -72,12 +72,29 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
                 doctor = new NormalizedUserTurn.EntityReference(reference, reference);
             }
         }
+        if (doctor != null && !DoctorNameNormalizer.isPlausibleReference(doctor.canonicalQuery())) {
+            doctor = null;
+        }
         Matcher specialtyMatcher = SPECIALTY_REFERENCE.matcher(original);
         NormalizedUserTurn.EntityReference specialty = specialtyMatcher.find()
                 ? new NormalizedUserTurn.EntityReference(specialtyMatcher.group(1).trim(), specialtyMatcher.group(1).trim()) : null;
+        if (specialty == null && normalized.matches("(?s).*(?:\\bgeneral\\s+medicine\\b|\\bgeneral\\s+physician\\b|\\bphysician\\b).*")) {
+            specialty = new NormalizedUserTurn.EntityReference(original, "General Medicine");
+        } else if (specialty == null && normalized.matches("(?s).*(?:\\bpediatrics?\\b|\\bpediatrician\\b|\\bchild(?:ren)?'s\\s+doctor\\b).*")) {
+            specialty = new NormalizedUserTurn.EntityReference(original, "Pediatrics");
+        }
+        if (specialty != null && (normalized.matches("(?s)^(?:general\\s+medicine|general\\s+physician|physician|pediatrics?|pediatrician)[.!? ]*$")
+                || normalized.matches("(?s).*\\b(?:doctor|specialist|specialty)\\b.*"))) {
+            doctor = null;
+        }
         boolean qualifier = Pattern.compile("(?i)\\b(?:with|from|by)\\s+([^?.!,]+)").matcher(original).find();
-        return canonicalTurn(original, normalized, selection, languageCode(), "en", ResponseStyle.STANDARD,
+        NormalizedUserTurn turn = canonicalTurn(original, normalized, selection, languageCode(), "en", ResponseStyle.STANDARD,
                 doctor, specialty, qualifier, referenceDate);
+        if (turn.intent() == NormalizedUserTurn.Intent.CONSULTATION_REQUEST && doctor != null
+                && normalized.matches("(?s).*(?:\\bappointments?\\b|\\bappointment\\s+please\\b).*")) {
+            turn = turn.withIntent(NormalizedUserTurn.Intent.BOOKING);
+        }
+        return turn;
     }
 
     protected String normalizeSelection(String text) {
@@ -105,8 +122,12 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
             controls.add(DeterministicControl.GREETING);
         }
         addConversationControls(original, normalized, controls);
-        boolean negative = Pattern.compile("(?i)(?<![\\p{L}])(?:no|don't|never\\s+mind)(?![\\p{L}])").matcher(normalized).find();
-        boolean positive = Pattern.compile("(?i)(?<![\\p{L}])(?:yes|confirm|go\\s+ahead)(?![\\p{L}])").matcher(normalized).find();
+        // A negation embedded in an unrelated sentence (e.g. Hindi "samajh nahi aaya")
+        // is not a yes/no answer. Accept a bounded initial no clause, including a
+        // following independent control such as "no, show me other slots".
+        boolean negative = Pattern.compile("(?i)^\\s*(?:no|don't|never\\s+mind|mat\\s+karo)(?:\\s+(?:ji|जी))?"
+                + "(?:\\s*[,;]\\s*.*)?\\s*$").matcher(normalized).matches();
+        boolean positive = Pattern.compile("(?i)(?<![\\p{L}])(?:yes|confirm|go\\s+ahead|kar\\s+do)(?![\\p{L}])").matcher(normalized).find();
         if (negative) controls.add(DeterministicControl.CONFIRMATION_NEGATIVE);
         if (positive) controls.add(DeterministicControl.CONFIRMATION_POSITIVE);
         boolean more = Pattern.compile("(?i)(?<![\\p{L}])(?:more|next|other)(?![\\p{L}])").matcher(normalized).find();
@@ -143,6 +164,11 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
     protected void addConversationControls(String original, String normalized, List<DeterministicControl> controls) {
         String text = ((normalized == null ? "" : normalized) + " " + (original == null ? "" : original))
                 .toLowerCase(Locale.ROOT);
+        if (text.matches(".*(?:talk\\s+to\\s+someone|talk\\s+to\\s+a\\s+person|"
+                + "speak\\s+to\\s+a\\s+person|kisi\\s+se\\s+baat\\s+karni\\s+hai|"
+                + "मुझे\\s+किसी\\s+से\\s+बात\\s+करनी\\s+है|किसी\\s+से\\s+बात\\s+करनी\\s+है).*")) {
+            controls.add(DeterministicControl.HUMAN_ASSISTANCE);
+        }
         if (text.matches(".*(?:talk\\s+to\\s+(?:a\\s+)?human|speak\\s+to\\s+(?:someone|a\\s+human)|human\\s+agent|receptionist|clinic\\s+se\\s+kisi|रिसेप्शनिस्ट|इंसान|मानव).*") ) {
             controls.add(DeterministicControl.HUMAN_ASSISTANCE);
         }
@@ -173,11 +199,25 @@ public class EnglishLanguageAdapter implements AivaLanguageAdapter {
                 || normalized.matches(".*\\bdo\\s+i\\s+have\\b.*"))
                 && normalized.matches(".*\\bappointments?\\b.*")) return NormalizedUserTurn.Intent.LOOKUP;
         if (normalized.matches(".*\\b(?:book|booking|schedule)\\b.*")) return NormalizedUserTurn.Intent.BOOKING;
+        if (isGenericConsultationRequest(normalized)) return NormalizedUserTurn.Intent.CONSULTATION_REQUEST;
         return NormalizedUserTurn.Intent.UNKNOWN;
+    }
+
+    protected boolean isGenericConsultationRequest(String normalized) {
+        if (normalized == null || normalized.isBlank()) return false;
+        boolean explicitLookup = normalized.matches("(?s).*(?:\\bdo i have\\b|\\bcheck\\b|\\blook up\\b|"
+                + "\\bshow me my\\b|\\bexisting\\b|\\bprevious\\b|\\bhistory\\b).*\\bappointments?\\b.*");
+        if (explicitLookup) return false;
+        boolean consultationSubject = normalized.matches("(?s).*(?:\\bdoctor\\b|\\bphysician\\b|\\bconsultation\\b|\\bconsult\\b).*");
+        boolean request = normalized.matches("(?s).*(?:\\bneed\\b|\\bwant\\b|\\bsee\\b|\\bmeet\\b|"
+                + "\\btalk\\s+to\\b|\\bconsult\\b|\\bchahiye\\b|चाहिए).*");
+        return consultationSubject && request
+                || normalized.matches("(?s).*\\b(?:i need|i want) an? appointment\\b.*");
     }
 
     protected String canonicalSemanticText(String normalized, NormalizedUserTurn.Intent intent) {
         if (intent == NormalizedUserTurn.Intent.BOOKING) return "book appointment";
+        if (intent == NormalizedUserTurn.Intent.CONSULTATION_REQUEST) return "consult doctor";
         if (intent == NormalizedUserTurn.Intent.LOOKUP) return "lookup appointments";
         if (intent == NormalizedUserTurn.Intent.CANCELLATION) return "cancel appointment";
         if (intent == NormalizedUserTurn.Intent.RESCHEDULE) return "reschedule appointment";

@@ -20,6 +20,28 @@ class AppointmentTimingRulesTest {
     }
 
     @Test
+    void upcomingAppointmentFilteringUsesFullLocalDateTimeAcrossMidnight() {
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        ZonedDateTime justAfterMidnight = ZonedDateTime.of(2026, 10, 26, 0, 5, 0, 0, zone);
+        ZonedDateTime previousDayAppointment = justAfterMidnight.minusHours(2);
+        ZonedDateTime laterSameDayAppointment = justAfterMidnight.plusHours(2);
+
+        assertThat(previousDayAppointment.toLocalDate()).isEqualTo(LocalDate.of(2026, 10, 25));
+        assertThat(previousDayAppointment.toLocalTime()).isEqualTo(LocalTime.of(22, 5));
+        assertThat(AppointmentTimingRules.isUpcoming(previousDayAppointment.toLocalDate(),
+                previousDayAppointment.toLocalTime(), zone, justAfterMidnight)).isFalse();
+        assertThat(AppointmentTimingRules.isUpcoming(laterSameDayAppointment.toLocalDate(),
+                laterSameDayAppointment.toLocalTime(), zone, justAfterMidnight)).isTrue();
+
+        ZonedDateTime beforeMidnight = ZonedDateTime.of(2026, 10, 25, 23, 55, 0, 0, zone);
+        ZonedDateTime afterSlot = ZonedDateTime.of(2026, 10, 26, 0, 6, 0, 0, zone);
+        assertThat(AppointmentTimingRules.isUpcoming(LocalDate.of(2026, 10, 26), LocalTime.of(0, 5),
+                zone, beforeMidnight)).isTrue();
+        assertThat(AppointmentTimingRules.isUpcoming(LocalDate.of(2026, 10, 26), LocalTime.of(0, 5),
+                zone, afterSlot)).isFalse();
+    }
+
+    @Test
     void pastDateReturnsNotBookableAndFutureDateRemainsBookable() {
         ZoneId zone = ZoneId.of("Asia/Kolkata");
         ZonedDateTime now = ZonedDateTime.of(2026, 6, 28, 10, 45, 0, 0, zone);

@@ -7,6 +7,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import com.deepthoughtnet.clinic.platform.audit.AuditActorContext;
 
 @Entity
 @Table(
@@ -37,6 +38,21 @@ public class AuditEventEntity {
     @Column(name = "actor_app_user_id")
     private UUID actorAppUserId;
 
+    @Column(name = "actor_type", length = 48)
+    private String actorType;
+
+    @Column(name = "actor_id", length = 128)
+    private String actorId;
+
+    @Column(name = "channel", length = 32)
+    private String channel;
+
+    @Column(name = "interaction_id")
+    private UUID interactionId;
+
+    @Column(name = "correlation_id", length = 128)
+    private String correlationId;
+
     @Column(name = "occurred_at", nullable = false)
     private OffsetDateTime occurredAt;
 
@@ -60,7 +76,8 @@ public class AuditEventEntity {
             UUID actorAppUserId,
             OffsetDateTime occurredAt,
             String summary,
-            String detailsJson
+            String detailsJson,
+            AuditActorContext actorContext
     ) {
         OffsetDateTime now = OffsetDateTime.now();
 
@@ -71,6 +88,13 @@ public class AuditEventEntity {
         entity.entityId = entityId;
         entity.action = action;
         entity.actorAppUserId = actorAppUserId;
+        if (actorContext != null) {
+            entity.actorType = actorContext.actorType();
+            entity.actorId = actorContext.actorId();
+            entity.channel = actorContext.channel();
+            entity.interactionId = actorContext.interactionId();
+            entity.correlationId = actorContext.correlationId();
+        }
         entity.occurredAt = occurredAt == null ? now : occurredAt;
         entity.summary = summary;
         entity.detailsJson = detailsJson;
@@ -100,6 +124,11 @@ public class AuditEventEntity {
 
     public UUID getActorAppUserId() {
         return actorAppUserId;
+    }
+
+    public AuditActorContext getActorContext() {
+        return actorType == null || channel == null ? null
+                : new AuditActorContext(actorType, actorId, channel, interactionId, correlationId);
     }
 
     public OffsetDateTime getOccurredAt() {

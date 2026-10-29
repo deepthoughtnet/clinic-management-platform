@@ -34,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +49,12 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     private static final double DEFAULT_CONFIDENCE = 1.0d;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() { };
     private static final Pattern ORDINAL = Pattern.compile("^(?:the\\s+)?(first|second|third|fourth|last|[1-9])(?:\\s+(?:one|slot|doctor))?[.!?]?$", Pattern.CASE_INSENSITIVE);
+
+    private UUID parseActorId(AivaTransactionAuthorization authorization) {
+        if (authorization == null || authorization.actorId() == null) return null;
+        try { return UUID.fromString(authorization.actorId()); }
+        catch (IllegalArgumentException ignored) { return null; }
+    }
     private static final Pattern CLOCK_TIME = Pattern.compile("^(?:at\\s+)?([01]?\\d|2[0-3])(?::([0-5]\\d))?\\s*(am|pm)?[.!?]?$", Pattern.CASE_INSENSITIVE);
     private static final Pattern ORDINAL_ACCEPTANCE = Pattern.compile(
             "^(?:the\\s+)?(first|second|third|fourth|last|[1-9](?:st|nd|rd|th)?)(?:\\s+(?:one|slot))?\\s+(?:works(?:\\s+for\\s+me)?|is\\s+(?:fine|okay)|will\\s+do)[.!?]?$",
@@ -164,16 +171,42 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
 
     @Override
     public ConversationDecision decide(NormalizedUserTurn normalizedTurn, SessionProjection context) {
+        var request = RequestContextHolder.require();
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        ZoneId zone = clinicTimeZoneResolver.resolve(tenantId);
+        AivaExecutionContext executionContext = new AivaExecutionContext(tenantId, null, "PATIENT_PORTAL",
+                normalizedTurn.languageCode(), zone,
+                context == null ? "aiva-v2" : context.conversationId(), null, null, null, java.util.Set.of(),
+                null, request.correlationId(), new AivaTransactionAuthorization(
+                AivaTransactionAuthorization.IdentityState.UNIDENTIFIED, null,
+                AivaTransactionAuthorization.ActorType.PATIENT_PORTAL_USER,
+                request.appUserId() == null ? null : request.appUserId().toString(), java.util.Set.of(),
+                "WEB_REQUEST_CONTEXT", null, null, tenantId,
+                context == null ? "aiva-v2" : context.conversationId()));
+        return decide(normalizedTurn, context, executionContext);
+    }
+
+    @Override
+    public ConversationDecision decide(NormalizedUserTurn normalizedTurn, SessionProjection context,
+                                       AivaExecutionContext executionContext) {
         String language = normalizedTurn.languageCode();
         long started = System.nanoTime();
+        logDecisionFlow("INPUT", normalizedTurn, context, null);
         ConversationDecision fast = fastPath(normalizedTurn, language, context, started);
         if (fast != null) {
+            if (context != null && context.activeDraft() != null
+                    && fast.operation() == Operation.START_BOOKING) {
+                log.info("AIVA_V2_DECISION_REJECTED reason=ACTIVE_BOOKING_CONTEXT operation={} conversationIdHash={}",
+                        fast.operation(), AivaV2LogRedaction.correlation(context.conversationId()));
+                return ConversationDecision.unknown(language, "CONTEXT_INCOMPATIBLE_DETERMINISTIC_PROPOSAL", true, elapsed(started));
+            }
             fast = mergeCanonicalFacts(normalizedTurn, fast, context);
             log.info("AIVA_V2_CONTROL_TRACE rawControlLanguage={} semanticControl={} normalizedOperation={} "
                             + "timeFactPresent={} daypartFactPresent={} confirmation={} providerCallRequired=false activeWorkflow={}",
                     normalizedTurn.languageCode(), semanticControl(fast), fast.operation(),
                     normalizedTurn.exactTime() != null || fast.bookingPatch().exactTime().mode() == PatchMode.SET,
                     normalizedTurn.daypart() != null, fast.confirmation(), activeWorkflow(context));
+            logDecisionFlow("OUTPUT", normalizedTurn, context, fast);
             return fast;
         }
         try {
@@ -190,32 +223,46 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     "pagination", normalizedTurn.pagination().name()));
             variables.put("language", language);
             variables.put("bookingContext", safeContext(context));
-            ZoneId zone = clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
+            ZoneId zone = executionContext == null ? ZoneId.of("Asia/Kolkata") : executionContext.timezone();
+            UUID tenantId = executionContext == null ? RequestContextHolder.requireTenantId()
+                    : executionContext.tenantId();
+            UUID actorId = executionContext == null ? RequestContextHolder.require().appUserId()
+                    : parseActorId(executionContext.transactionAuthorization());
+            String correlationId = executionContext == null ? RequestContextHolder.require().correlationId()
+                    : executionContext.correlationId();
             variables.put("referenceDate", LocalDate.now(clock.withZone(zone)).toString());
             variables.put("referenceTimezone", zone.getId());
             variables.put("instructions", schemaInstructions());
             AiOrchestrationResponse response = orchestrationService.complete(new AiOrchestrationRequest(
                     AiProductCode.GENERIC,
-                    RequestContextHolder.requireTenantId(),
-                    RequestContextHolder.require().appUserId(),
+                    tenantId,
+                    actorId,
                     AiTaskType.GENERIC_EXTRACTION,
                     "generic.extraction.v1",
                     variables,
                     List.of(),
                     1400,
                     0.1d,
-                    RequestContextHolder.require().correlationId(),
+                    correlationId,
                     "patient-portal-aiva-v2-decision",
                     AivaV2ConversationDecisionSchema.definition()
             ));
             ConversationDecision decision = parse(response, language, elapsed(started));
+            if (context != null && context.activeDraft() != null
+                    && decision.operation() == Operation.START_BOOKING) {
+                log.info("AIVA_V2_DECISION_REJECTED reason=ACTIVE_BOOKING_CONTEXT operation={} conversationIdHash={}",
+                        decision.operation(), AivaV2LogRedaction.correlation(context.conversationId()));
+                return ConversationDecision.unknown(language, "CONTEXT_INCOMPATIBLE_AI_PROPOSAL", true, elapsed(started));
+            }
             decision = recoverUnsolicitedConfirmationAsBooking(normalizedTurn, context, decision);
             decision = mergeCanonicalFacts(normalizedTurn, decision, context);
             log.info("AIVA_V2_DECISION_TRACE conversationIdHash={} provider={} fallbackUsed={} responseEnvelope={} operation={} dialogAct={} confidence={} parseStatus={} normalization={} defaultsApplied={}",
                     context == null ? "absent" : AivaV2LogRedaction.correlation(context.conversationId()), decision.provider(), decision.fallbackUsed(),
                     envelope(response), decision.operation(), decision.dialogAct(), decision.confidence(),
                     normalizationStatus(response, decision), normalizationStatus(response, decision), defaultsApplied(response));
-            return validateDecision(decision);
+            decision = validateDecision(decision);
+            logDecisionFlow("OUTPUT", normalizedTurn, context, decision);
+            return decision;
         } catch (RuntimeException ex) {
             return ConversationDecision.unknown(language, "UNAVAILABLE", false, elapsed(started));
         }
@@ -462,6 +509,9 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
         }
         ConversationDecision farewell = farewellFastPath(turn, language, started);
         if (farewell != null) return farewell;
+        ConversationDecision bookingDateContinuation = bookingDateContinuationFastPath(
+                turn, context, language, started);
+        if (bookingDateContinuation != null) return bookingDateContinuation;
         ConversationDecision bookingRecovery = bookingAvailabilityRecoveryFastPath(turn, context, language, started);
         if (bookingRecovery != null) return bookingRecovery;
         ConversationDecision relativeSlots = relativeSlotFastPath(turn, context, language, started);
@@ -613,6 +663,25 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     ConfirmationPolarity.NONE, language, started);
         }
         return null;
+    }
+
+    private ConversationDecision bookingDateContinuationFastPath(NormalizedUserTurn turn,
+            SessionProjection context, String language, long started) {
+        if (context == null || context.activeDraft() == null
+                || context.activeDraft().status() != AivaV2Models.DraftStatus.COLLECTING
+                || context.activeDraft().selectedProvider() == null
+                || context.activeDraft().preferredDate() != null
+                || turn.temporal() == null
+                || turn.temporal().status() == NormalizedUserTurn.TemporalStatus.NONE
+                || turn.intent() == NormalizedUserTurn.Intent.LOOKUP
+                || turn.intent() == NormalizedUserTurn.Intent.CANCELLATION
+                || turn.intent() == NormalizedUserTurn.Intent.RESCHEDULE) return null;
+        ValuePatch date = turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                && turn.temporal().localDate() != null
+                ? ValuePatch.set(turn.temporal().localDate().toString()) : ValuePatch.unchanged();
+        return decision(DialogAct.CHANGE_INFORMATION, Operation.UPDATE_BOOKING,
+                new BookingPatch(null, null, date, null, null), null,
+                ConfirmationPolarity.NONE, language, started);
     }
 
     private ConversationDecision deterministicSpecialtyFastPath(NormalizedUserTurn turn,
@@ -1091,12 +1160,41 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
     }
 
     private String activeWorkflow(SessionProjection context) {
-        if (context != null && context.pendingReschedule() != null) return "RESCHEDULE";
-        if (context != null && (context.pendingConfirmation() != null || context.pendingCancellation() != null)) {
-            return "BOOKING_OR_CANCELLATION";
-        }
-        if (context != null && context.activeDraft() != null) return "BOOKING";
-        return "NONE";
+        return context == null ? "NONE" : context.activeWorkflow();
+    }
+
+    private void logDecisionFlow(String stage, NormalizedUserTurn turn, SessionProjection session,
+            ConversationDecision decision) {
+        AivaV2Models.BookingDraft draft = session == null ? null : session.activeDraft();
+        var active = session == null ? null : session.activeVoiceDoctor();
+        var provider = draft == null ? null : draft.selectedProvider();
+        String temporalSource = turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                ? "CURRENT_TURN" : draft != null && draft.preferredDate() != null ? "SESSION_CONTEXT" : "NONE";
+        log.info("AIVA_V2_DECISION_FLOW stage={} tenantId={} providerCallId={} conversationIdHash={} turnId={} turnNumber={} "
+                        + "rawOperation={} normalizedOperation={} dialogAct={} intent={} activeWorkflow={} "
+                        + "activeVoiceDoctorId={} activeVoiceDoctorName={} bookingProviderId={} bookingProviderName={} "
+                        + "providerResolved={} currentTurnDate={} effectiveDate={} draftDate={} datePresent={} temporalSource={} "
+                        + "daypart={} exactTime={} rangeStart={} rangeEnd={} slotSelected={} selectedSlotRef={} draftRevision={} draftStatus={} "
+                        + "decisionCategory={}",
+                stage, org.slf4j.MDC.get(AivaV2VoiceFlowTrace.TENANT_ID),
+                org.slf4j.MDC.get(AivaV2VoiceFlowTrace.CALL_ID),
+                session == null ? "absent" : AivaV2VoiceFlowTrace.conversationHash(session.conversationId()),
+                AivaV2VoiceFlowTrace.turnId(), AivaV2VoiceFlowTrace.turnNumber(),
+                decision == null ? null : decision.operation(), decision == null ? null : decision.operation(),
+                decision == null ? null : decision.dialogAct(), turn.intent(), session == null ? "NONE" : activeWorkflow(session),
+                active == null ? null : active.doctorId(), active == null ? null : active.displayName(),
+                provider == null ? null : provider.doctorId(), provider == null ? null : provider.displayName(),
+                provider != null, turn.temporal().localDate(), turn.temporal().localDate() != null
+                        ? turn.temporal().localDate() : draft == null ? null : draft.preferredDate(),
+                draft == null ? null : draft.preferredDate(), draft != null && draft.preferredDate() != null,
+                temporalSource, turn.daypart(), turn.exactTime(),
+                draft == null || draft.availabilityTimeConstraint() == null ? null
+                        : draft.availabilityTimeConstraint().startTime(),
+                draft == null || draft.availabilityTimeConstraint() == null ? null
+                        : draft.availabilityTimeConstraint().endTime(),
+                draft != null && draft.selectedSlotReference() != null,
+                draft == null ? null : draft.selectedSlotReference(), draft == null ? null : draft.revision(),
+                draft == null ? null : draft.status(), decision == null ? "NOT_DECIDED" : decision.operation());
     }
 
     private ConversationDecision timeConstraintFastPath(String text, String language, long started,
@@ -1173,6 +1271,15 @@ class AiAivaV2ConversationDecisionGateway implements AivaV2ConversationDecisionG
                     null, matcher.group(1), language, started, context, text);
         }
         return null;
+    }
+
+    @Override
+    public ConversationDecision deterministicCollectionTimeConstraint(NormalizedUserTurn turn,
+            SessionProjection context) {
+        if (turn == null || context == null) return null;
+        long started = System.nanoTime();
+        return timeConstraintFastPath(turn.normalizedText() + " " + turn.rawText(),
+                turn.languageCode(), started, context);
     }
 
     private String normalizeTemporalNumberWords(String text) {

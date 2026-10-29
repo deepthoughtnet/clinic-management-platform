@@ -72,8 +72,11 @@ public class HealthcareAiReadOnlyToolGateway {
             case "FIND_DOCTOR" -> {
                 PatientPortalCareAiBusinessLookupService.DoctorLookup lookupResult = lookup.findDoctorsWithDiagnostics(
                         context, input.query(), input.speciality(), input.clinic());
-                yield ToolResult.success(tool, lookupResult.doctors(), lookupResult.doctors().size(),
-                        lookupResult.sourceCount(), "sourceCount=" + lookupResult.sourceCount()
+                List<PublicDoctorSummaryResponse> doctors = input.date() == null ? lookupResult.doctors()
+                        : doctorsAvailableOn(context, lookupResult.doctors(), input.date(), input.timezone());
+                yield ToolResult.success(tool, doctors, doctors.size(), lookupResult.sourceCount(),
+                        "sourceCount=" + lookupResult.sourceCount()
+                                + "; availabilityDate=" + input.date()
                                 + "; specialty=" + lookupResult.canonicalSpeciality());
             }
             case "FIND_CLINIC" -> {
@@ -92,6 +95,23 @@ public class HealthcareAiReadOnlyToolGateway {
             }
             default -> ToolResult.denied(tool);
         };
+    }
+
+    private List<PublicDoctorSummaryResponse> doctorsAvailableOn(HealthcareAiExecutionContext context,
+            List<PublicDoctorSummaryResponse> candidates, LocalDate date, ZoneId timezone) {
+        if (context == null || context.tenantId() == null || date == null || candidates == null
+                || candidates.isEmpty()) return List.of();
+        ZoneId zone = timezone == null ? ZoneId.of("Asia/Kolkata") : timezone;
+        return candidates.stream().limit(20).filter(doctor -> {
+            UUID doctorId;
+            try {
+                doctorId = UUID.fromString(doctor.publicDoctorId());
+            } catch (RuntimeException invalidCanonicalId) {
+                return false;
+            }
+            return appointmentService.listSlots(context.tenantId(), doctorId, date, zone).stream()
+                    .anyMatch(slot -> slot.bookable() && slotStartsAfterNow(date, slot.slotTime(), zone));
+        }).toList();
     }
 
     private ToolResult availabilityResult(String tool, HealthcareAiExecutionContext context, ToolInput input) {

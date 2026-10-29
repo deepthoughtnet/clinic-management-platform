@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.*;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.LanguageAdapterRegistry;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiDoctorOption;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
@@ -74,12 +75,7 @@ class AivaV2LanguageBoundaryVerticalTest {
         gateway = new AiAivaV2ConversationDecisionGateway(semanticProvider, new ObjectMapper(), zoneResolver,
                 clock, registry);
         patientPortal = mock(PatientPortalService.class);
-        when(patientPortal.doctorAvailability(any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
-            LocalDate date = invocation.getArgument(5);
-            return new PatientPortalDoctorAvailabilityResponse(date, List.of(
-                    new PatientPortalDoctorSlotResponse("fixture-20-30", date, LocalTime.of(20, 30),
-                            LocalTime.of(21, 0), "AVAILABLE", true)), List.of());
-        });
+        stubTenantSlots(patientPortal, "date-fixture", List.of("20:30"));
         tools = new AivaV2BookingTools(patientPortal, mock(PublicCatalogFacade.class), zoneResolver, clock);
         kernel = new AivaV2TransactionalKernel(tools, clock);
         provider = new ProviderCandidate("fixture-provider", "provider-handle", "doctor-akshu", null,
@@ -99,12 +95,19 @@ class AivaV2LanguageBoundaryVerticalTest {
             SessionProjection session = session();
             var turn = registry.resolve(input[0], input[1]).normalize(input[1], REFERENCE);
             assertThat(turn.temporal().localDate()).as(input[1]).isEqualTo(EXPECTED);
+            if (input[1].contains("स्लॉट्स")) {
+                assertThat(turn.doctorEntity()).as("date and slot wording is not a doctor reference: " + input[1]).isNull();
+            }
             ConversationDecision decision = gateway.decide(turn, session);
             assertThat(decision.bookingPatch().dateExpression().value()).as(input[1]).isEqualTo("2026-09-24");
             AivaV2TemporalResolution temporal = new AivaV2TemporalNormalizer(clock, ZONE)
                     .normalize(turn.temporal(), decision.bookingPatch().dateExpression(), null);
             KernelResultHolder result = runKernel(session, decision, temporal, input[1]);
             assertThat(result.session().latestAvailabilityResult().date()).as(input[1]).isEqualTo(EXPECTED);
+            assertThat(result.session().latestAvailabilityResult().doctorId()).as(input[1]).isEqualTo("doctor-akshu");
+            assertThat(result.session().activeDraft().selectedProvider().doctorId()).as(input[1]).isEqualTo("doctor-akshu");
+            assertThat(result.session().activeDraft().latestAvailabilityRequestId()).as(input[1])
+                    .isEqualTo(result.session().latestAvailabilityResult().requestId());
             assertThat(result.session().activeDraft().preferredDate()).as(input[1]).isEqualTo(EXPECTED);
             assertThat(result.response().structuredResponse().type()).as(input[1])
                     .isEqualTo(AivaStructuredResponse.ResponseType.AVAILABLE_SLOTS);
@@ -116,7 +119,7 @@ class AivaV2LanguageBoundaryVerticalTest {
             } else {
                 assertThat(rendered).contains("Available slots for 24 September 2026");
             }
-            verify(patientPortal).doctorAvailability(null, "doctor-akshu", null, tenant, null, EXPECTED);
+            verify(patientPortal).doctorSlotsForTenant(tenantUuid, "doctor-akshu", null, EXPECTED);
         }
         org.mockito.Mockito.verifyNoInteractions(semanticProvider);
     }
@@ -138,14 +141,10 @@ class AivaV2LanguageBoundaryVerticalTest {
                         12, BigDecimal.valueOf(500), List.of("Hindi", "English"), "Area", "City",
                         "ONLINE_BOOKING", null, null, "Clinic", "clinic", true, null, null,
                         "BOOK-1", true)), 0, 50, 1, 1));
-        when(patientPortal.doctorAvailability(any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
-            LocalDate date = invocation.getArgument(5);
-            return new PatientPortalDoctorAvailabilityResponse(date, List.of(
-                    slot(date, "slot-17", "17:00"), slot(date, "slot-18", "18:00"),
-                    slot(date, "slot-19", "19:00"), slot(date, "slot-1930", "19:30"),
-                    slot(date, "slot-20", "20:00"), slot(date, "slot-2030", "20:30"),
-                    slot(date, "slot-21", "21:00")), List.of());
-        });
+        when(patientPortal.careAiDoctorsForTenant(tenantUuid))
+                .thenReturn(List.of(canonicalDoctor("doctor-akshu", "Doc Akshu Kumar")));
+        stubTenantSlots(patientPortal, "conversation-fixture",
+                List.of("17:00", "18:00", "19:00", "19:30", "20:00", "20:30", "21:00"));
         when(patientPortal.bookAppointment(any())).thenReturn(new PatientPortalAppointmentConfirmationResponse(
                 "APT-STAGE3", "BOOKED", EXPECTED, LocalTime.of(20, 0), "Asia/Kolkata", "Doc Akshu Kumar",
                 "Clinic", null, "ONLINE", "AIVA", "BOOKED", null, null, null, null, false, null, null));
@@ -155,8 +154,8 @@ class AivaV2LanguageBoundaryVerticalTest {
                 startBooking, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null, "STOP"));
         AivaV2BookingTools realBookingTools = new AivaV2BookingTools(patientPortal, catalog, zoneResolver(), clock);
         AivaV2TransactionalKernel realKernel = new AivaV2TransactionalKernel(realBookingTools, clock);
-        AivaV2SessionStore store = new AivaV2SessionStore(clock);
-        AivaV2ConversationService service = new AivaV2ConversationService(gateway, realKernel, store,
+        AivaV2SessionStore sessionStore = new AivaV2SessionStore(clock);
+        AivaV2ConversationService service = new AivaV2ConversationService(gateway, realKernel, sessionStore,
                 patientPortal, zoneResolver(), clock, renderer);
 
         String[][] conversations = {
@@ -177,10 +176,12 @@ class AivaV2LanguageBoundaryVerticalTest {
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.AVAILABLE_SLOTS);
             assertRenderedStyle(response, flow);
             assertThat(response.state().date()).isEqualTo(EXPECTED);
+            assertCanonicalProviderContinuity(sessionStore, conversationId);
             response = service.message(new MessageRequest(conversationId, flow[3], flow[0]));
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.AVAILABLE_SLOTS);
             assertRenderedStyle(response, flow);
             assertThat(response.state().timeWindow()).isEqualTo("evening");
+            assertCanonicalProviderContinuity(sessionStore, conversationId);
             response = service.message(new MessageRequest(conversationId, flow[4], flow[0]));
             assertThat(response.structuredResponse().type()).isEqualTo(AivaStructuredResponse.ResponseType.AVAILABLE_SLOTS);
             assertRenderedStyle(response, flow);
@@ -206,6 +207,13 @@ class AivaV2LanguageBoundaryVerticalTest {
         }
         assertThat(bookings).isEqualTo(3);
         verify(patientPortal, org.mockito.Mockito.times(3)).bookAppointment(any());
+    }
+
+    private void assertCanonicalProviderContinuity(AivaV2SessionStore sessionStore, String conversationId) {
+        SessionProjection persisted = sessionStore.find(tenant + "|" + patient + "|" + conversationId).orElseThrow();
+        assertThat(persisted.activeDraft().selectedProvider().doctorId()).isEqualTo("doctor-akshu");
+        assertThat(persisted.latestAvailabilityResult().doctorId()).isEqualTo("doctor-akshu");
+        assertThat(persisted.activeDraft().preferredDate()).isEqualTo(persisted.latestAvailabilityResult().date());
     }
 
     @Test
@@ -302,16 +310,17 @@ class AivaV2LanguageBoundaryVerticalTest {
     @Test
     void providerAmbiguityFlowsThroughConversationServiceAndRendersAllCandidates() {
         when(patientPortal.currentPatientId()).thenReturn(patient);
-        PublicCatalogFacade catalog = mock(PublicCatalogFacade.class);
-        List<PublicDoctorSummaryResponse> candidates = List.of(
-                publicDoctor("doctor-akshu", "Doc Akshu Kumar"),
-                publicDoctor("doctor-uat", "Doc UAT Automation Doctor"),
-                publicDoctor("doctor-demo", "Demo Doctor"));
-        when(catalog.listDoctors(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
-                .thenReturn(new PublicPageResponse<>(candidates, 0, 50, 1, 1));
+        List<PatientPortalCareAiDoctorOption> canonicalChoices = List.of(
+                canonicalDoctor("doctor-akshu", "Doc Akshu Kumar"),
+                canonicalDoctor("doctor-uat", "Doc UAT Automation Doctor"),
+                canonicalDoctor("doctor-demo", "Demo Doctor"));
+        when(patientPortal.careAiDoctorsForTenant(tenantUuid)).thenReturn(canonicalChoices);
+        when(patientPortal.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(canonicalChoices);
         String start = "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\",\"operation\":\"START_BOOKING\",\"confidence\":0.99}";
         when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(start));
-        AivaV2BookingTools realBookingTools = new AivaV2BookingTools(patientPortal, catalog, zoneResolver(), clock);
+        AivaV2BookingTools realBookingTools = new AivaV2BookingTools(patientPortal, null, zoneResolver(), clock);
+        assertThat(realBookingTools.resolveBookingProviderForTenant("Dr R", null, null, tenantUuid).status())
+                .isEqualTo(ResolutionStatus.AMBIGUOUS);
         AivaV2TransactionalKernel realKernel = new AivaV2TransactionalKernel(realBookingTools, clock);
         AivaV2ConversationService service = new AivaV2ConversationService(gateway, realKernel,
                 new AivaV2SessionStore(clock), patientPortal, zoneResolver(), clock, renderer);
@@ -747,6 +756,7 @@ class AivaV2LanguageBoundaryVerticalTest {
                 .thenReturn(new PublicPageResponse<>(List.of(
                         publicDoctor("doctor-akshu", "Doc Akshu Kumar"),
                         publicDoctor("doctor-arjun", "Dr Arjun Mehta")), 0, 50, 2, 1));
+        stubTenantSlots(patientPortal, "session-fixture", List.of("18:00", "20:00"));
         when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(
                 "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\",\"operation\":\"START_BOOKING\",\"confidence\":0.99}"));
         AivaV2BookingTools realTools = new AivaV2BookingTools(patientPortal, catalog, zoneResolver(), clock);
@@ -759,6 +769,11 @@ class AivaV2LanguageBoundaryVerticalTest {
         UUID tenantB = UUID.randomUUID();
         UUID patientA = patient;
         UUID patientB = UUID.randomUUID();
+        when(patientPortal.careAiDoctorsForTenant(tenantA)).thenReturn(List.of(
+                canonicalDoctor("doctor-akshu", "Doc Akshu Kumar"),
+                canonicalDoctor("doctor-arjun", "Dr Arjun Mehta")));
+        when(patientPortal.careAiDoctorsForTenant(tenantB)).thenReturn(List.of(
+                canonicalDoctor(tenantB, "doctor-arjun", "Dr Arjun Mehta")));
 
         setIdentity(tenantA, patientA);
         MessageResponse patientAStart = service.message(new MessageRequest("shared-id",
@@ -841,14 +856,12 @@ class AivaV2LanguageBoundaryVerticalTest {
         when(patientPortal.currentPatientId()).thenReturn(patient);
         when(semanticProvider.complete(any())).thenReturn(orchestrationResponse(
                 "{\"schemaVersion\":\"1.0\",\"dialogAct\":\"START_REQUEST\",\"operation\":\"START_BOOKING\",\"confidence\":0.99}"));
+        when(patientPortal.careAiDoctorsForTenant(tenantUuid))
+                .thenReturn(List.of(canonicalDoctor("doctor-akshu", "Doc Akshu Kumar")));
         PublicCatalogFacade catalog = mock(PublicCatalogFacade.class);
         when(catalog.listDoctors(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new PublicPageResponse<>(List.of(publicDoctor("doctor-akshu", "Doc Akshu Kumar")), 0, 50, 1, 1));
-        when(patientPortal.doctorAvailability(any(), any(), any(), any(), any(), any())).thenAnswer(invocation -> {
-            LocalDate date = invocation.getArgument(5);
-            return new PatientPortalDoctorAvailabilityResponse(date, List.of(
-                    slot(date, "style-18", "18:00"), slot(date, "style-20", "20:00")), List.of());
-        });
+        stubTenantSlots(patientPortal, "style-fixture", List.of("18:00", "20:00"));
         when(patientPortal.bookAppointment(any())).thenReturn(new PatientPortalAppointmentConfirmationResponse(
                 "APT-STYLE", "BOOKED", EXPECTED, LocalTime.of(20, 0), "Asia/Kolkata", "Doc Akshu Kumar",
                 "Clinic", null, "ONLINE", "AIVA", "BOOKED", null, null, null, null, false, null, null));
@@ -913,6 +926,15 @@ class AivaV2LanguageBoundaryVerticalTest {
                 null, null, "Clinic", "clinic", true, null, null, "BOOK-1", true);
     }
 
+    private PatientPortalCareAiDoctorOption canonicalDoctor(String id, String name) {
+        return canonicalDoctor(tenantUuid, id, name);
+    }
+
+    private PatientPortalCareAiDoctorOption canonicalDoctor(UUID ownerTenant, String id, String name) {
+        return new PatientPortalCareAiDoctorOption(id, name, "General Medicine", UUID.randomUUID(),
+                UUID.randomUUID(), ownerTenant, "clinic", "Clinic");
+    }
+
     private void assertRenderedStyle(MessageResponse response, String[] flow) {
         assertStructuredResponseRendersInAllStyles(response);
         String rendered = response.assistantMessage();
@@ -935,6 +957,14 @@ class AivaV2LanguageBoundaryVerticalTest {
     private PatientPortalDoctorSlotResponse slot(LocalDate date, String reference, String time) {
         LocalTime startsAt = LocalTime.parse(time);
         return new PatientPortalDoctorSlotResponse(reference, date, startsAt, startsAt.plusMinutes(30), "AVAILABLE", true);
+    }
+
+    private void stubTenantSlots(PatientPortalService portal, String referencePrefix, List<String> times) {
+        when(portal.doctorSlotsForTenant(any(), any(), any(), any())).thenAnswer(invocation -> {
+            LocalDate date = invocation.getArgument(3);
+            return times.stream().map(time -> slot(date,
+                    referencePrefix + "-" + time.replace(":", ""), time)).toList();
+        });
     }
 
     private ClinicTimeZoneResolver zoneResolver() {

@@ -27,6 +27,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.http.HttpMethod;
 
 class GlobalRestExceptionHandlerTest {
     private MockMvc mockMvc;
@@ -76,6 +78,19 @@ class GlobalRestExceptionHandlerTest {
                 .andExpect(jsonPath("$.code").value("forbidden"))
                 .andExpect(jsonPath("$.message").value("You do not have permission to perform this action"))
                 .andExpect(jsonPath("$.correlationId").value("corr-789"));
+    }
+
+    @Test
+    void mapsMissingEndpointToNotFoundInsteadOfInternalServerError() throws Exception {
+        mockMvc.perform(get("/missing-resource")
+                        .header("X-Correlation-Id", "corr-missing-aiva")
+                        )
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.code").value("not_found"))
+                .andExpect(jsonPath("$.message").value("Requested endpoint was not found"))
+                .andExpect(jsonPath("$.path").value("/missing-resource"))
+                .andExpect(jsonPath("$.correlationId").value("corr-missing-aiva"));
     }
 
     @Test
@@ -161,6 +176,11 @@ class GlobalRestExceptionHandlerTest {
 
     @RestController
     static class TestController {
+        @GetMapping("/missing-resource")
+        void missingResource() throws NoResourceFoundException {
+            throw new NoResourceFoundException(HttpMethod.GET, "api/patient-portal/aiva-v2/message");
+        }
+
         @PostMapping("/validation")
         void validation(@Valid @RequestBody Payload payload) {
         }

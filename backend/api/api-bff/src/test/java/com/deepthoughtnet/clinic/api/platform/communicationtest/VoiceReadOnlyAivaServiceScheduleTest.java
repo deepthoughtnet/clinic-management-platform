@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceConversationAdapter;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceToolExecutor;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityTimeConstraint;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityTimeConstraintMode;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceToolExecutor.QueryType;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn.Daypart;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.ResponseStyle;
@@ -14,6 +17,7 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.HealthcareAiReadOnlyTo
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -65,7 +69,8 @@ class VoiceReadOnlyAivaServiceScheduleTest {
         String slotResponse = service.renderAvailability(eveningSlots, "hi-IN", ResponseStyle.STANDARD);
 
         assertThat(choicePrompt).contains("सुबह और शाम").doesNotContain("दोपहर");
-        assertThat(slotResponse).contains("5 शाम", "5:30 शाम", "6 शाम").doesNotContain("6:30 शाम");
+        assertThat(slotResponse).contains("शाम पाँच बजे", "शाम साढ़े पाँच बजे", "शाम छह बजे")
+                .doesNotContain("6:30 शाम", " PM", " AM");
     }
 
     @Test
@@ -156,6 +161,122 @@ class VoiceReadOnlyAivaServiceScheduleTest {
     }
 
     @Test
+    void exactTimeFiltersCanonicalSlotsToOneAndMarksReadOnlyCandidate() {
+        LocalDate date = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1);
+        var constraint = new AvailabilityTimeConstraint(AvailabilityTimeConstraintMode.EXACT,
+                LocalTime.of(18, 0), null);
+        var input = input(date, Daypart.EVENING, constraint, 0);
+        var canonical = canonicalSlots(date);
+        var gatewayResult = gatewayResult(canonical);
+
+        var filtered = service.applyCanonicalSlotConstraint("FIND_SLOTS", gatewayResult, input);
+        var data = (VoiceAvailabilityData) filtered.value();
+        var sessionContext = service.availabilityContext(filtered, input);
+
+        assertThat(data.bookableSlots()).containsExactly(slot(date, 18, 0));
+        assertThat(filtered.diagnostics()).contains("exactMatchCount=1", "exactSlotMatch=true",
+                "matchedCanonicalSlot=" + date + "T18:00");
+        assertThat(sessionContext.availabilityTimeConstraint()).isEqualTo(constraint);
+        assertThat(sessionContext.cursor()).isEqualTo("VOICE_EXACT_SLOT_CANDIDATE");
+        assertThat(sessionContext.slots()).hasSize(1);
+        var turn = new AivaV2VoiceConversationAdapter.TurnResult("available", "FIND_SLOTS", "FIND_SLOTS",
+                true, false, true, null, 1, "one slot", false, null);
+        var diagnostics = service.withResponseSource(java.util.Map.of(), turn, filtered, input);
+        assertThat(diagnostics).containsEntry("requestedExactTime", "18:00")
+                .containsEntry("matchedCanonicalSlot", date + "T18:00")
+                .containsEntry("exactSlotMatch", true)
+                .containsEntry("exactSlotCandidate", true)
+                .containsEntry("slotSelectionSource", "EXACT_TIME");
+        assertThat(service.renderTimeFilteredSlots(filtered, data, input, "hi-IN", ResponseStyle.STANDARD,
+                ZoneId.of("Asia/Kolkata"))).contains("कल शाम 6 बजे का slot उपलब्ध है");
+    }
+
+    @Test
+    void unavailableExactTimeReturnsOnlyThreeNearestCanonicalAlternatives() {
+        LocalDate date = LocalDate.of(2026, 11, 5);
+        var constraint = new AvailabilityTimeConstraint(AvailabilityTimeConstraintMode.EXACT,
+                LocalTime.of(18, 15), null);
+        var input = input(date, Daypart.EVENING, constraint, 0);
+        var filtered = service.applyCanonicalSlotConstraint("FIND_SLOTS", gatewayResult(canonicalSlots(date)), input);
+        var data = (VoiceAvailabilityData) filtered.value();
+
+        assertThat(data.bookableSlots()).extracting(VoiceSlot::startTime)
+                .containsExactly(LocalTime.of(18, 0), LocalTime.of(18, 30), LocalTime.of(17, 30));
+        assertThat(filtered.diagnostics()).contains("exactMatchCount=0", "exactSlotMatch=false");
+        assertThat(service.renderTimeFilteredSlots(filtered, data, input, "en", ResponseStyle.STANDARD,
+                ZoneId.of("Asia/Kolkata"))).contains("6:15 PM is not available", "6:00 PM", "6:30 PM")
+                .doesNotContain("5:00 PM");
+    }
+
+    @Test
+    void multipleExactTimeMatchesAreNotSelectedArbitrarily() {
+        LocalDate date = LocalDate.of(2026, 11, 5);
+        var constraint = new AvailabilityTimeConstraint(AvailabilityTimeConstraintMode.EXACT,
+                LocalTime.of(18, 0), null);
+        var input = input(date, Daypart.EVENING, constraint, 0);
+        VoiceAvailabilityData data = new VoiceAvailabilityData("doctor-ravi", "Ravi Mehta",
+                QueryType.SLOT_AVAILABILITY, date, Daypart.EVENING, List.of(),
+                List.of(slot(date, 18, 0), slot(date, 18, 0)), List.of(Daypart.EVENING), List.of(), false, 0);
+        var result = new HealthcareAiReadOnlyToolGateway.ToolResult("FIND_SLOTS", true, true, data,
+                2, 2, "canonical appointment-domain slots");
+        var filtered = service.applyCanonicalSlotConstraint("FIND_SLOTS", result, input);
+
+        assertThat(((VoiceAvailabilityData) filtered.value()).bookableSlots()).isEmpty();
+        assertThat(filtered.diagnostics()).contains("exactMatchCount=2", "exactSlotMatch=false");
+        assertThat(service.renderTimeFilteredSlots(filtered, (VoiceAvailabilityData) filtered.value(), input,
+                "en", ResponseStyle.STANDARD, ZoneId.of("Asia/Kolkata")))
+                .contains("More than one appointment option", "Which clinic or location");
+    }
+
+    @Test
+    void rangeUsesInclusiveCanonicalSlotStartTimeBoundaries() {
+        LocalDate date = LocalDate.of(2026, 11, 5);
+        var constraint = new AvailabilityTimeConstraint(AvailabilityTimeConstraintMode.BETWEEN,
+                LocalTime.of(16, 0), LocalTime.of(18, 0));
+        var input = input(date, null, constraint, 0);
+        var filtered = service.applyCanonicalSlotConstraint("FIND_SLOTS", gatewayResult(canonicalSlots(date)), input);
+        var data = (VoiceAvailabilityData) filtered.value();
+
+        assertThat(data.bookableSlots()).extracting(VoiceSlot::startTime)
+                .containsExactly(LocalTime.of(17, 0), LocalTime.of(17, 30), LocalTime.of(18, 0));
+        assertThat(filtered.diagnostics()).contains("slotSelectionSource=TIME_RANGE");
+        var turn = new AivaV2VoiceConversationAdapter.TurnResult("available", "FIND_SLOTS", "FIND_SLOTS",
+                true, false, true, null, 3, "three slots", false, null);
+        assertThat(service.withResponseSource(java.util.Map.of(), turn, filtered, input))
+                .containsEntry("requestedRangeStart", "16:00")
+                .containsEntry("requestedRangeEnd", "18:00")
+                .containsEntry("slotSelectionSource", "TIME_RANGE");
+    }
+
+    @Test
+    void noConstraintLeavesExistingDaypartResultUntouched() {
+        LocalDate date = LocalDate.of(2026, 11, 5);
+        var input = input(date, Daypart.EVENING, null, 0);
+        var gateway = gatewayResult(canonicalSlots(date));
+
+        assertThat(service.applyCanonicalSlotConstraint("FIND_SLOTS", gateway, input)).isSameAs(gateway);
+    }
+
+    private AivaV2VoiceToolExecutor.ToolInput input(LocalDate date, Daypart daypart,
+            AvailabilityTimeConstraint constraint, int offset) {
+        return new AivaV2VoiceToolExecutor.ToolInput(null, null, null, null, "doctor-ravi", date,
+                QueryType.SLOT_AVAILABILITY, daypart, ZoneId.of("Asia/Kolkata"), offset, constraint);
+    }
+
+    private HealthcareAiReadOnlyToolGateway.ToolResult gatewayResult(List<VoiceSlot> slots) {
+        LocalDate date = slots.getFirst().date();
+        VoiceAvailabilityData data = new VoiceAvailabilityData("doctor-ravi", "Ravi Mehta",
+                QueryType.SLOT_AVAILABILITY, date, Daypart.EVENING, List.of(), slots,
+                List.of(Daypart.EVENING), List.of(), false, 0);
+        return new HealthcareAiReadOnlyToolGateway.ToolResult("FIND_SLOTS", true, true, data,
+                slots.size(), slots.size(), "canonical appointment-domain slots");
+    }
+
+    private List<VoiceSlot> canonicalSlots(LocalDate date) {
+        return List.of(slot(date, 17, 0), slot(date, 17, 30), slot(date, 18, 0), slot(date, 18, 30));
+    }
+
+    @Test
     void responseStyleKeepsEnglishAndHinglishDistinct() {
         LocalDate date = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")).plusDays(1);
         VoiceAvailabilityData available = new VoiceAvailabilityData("doctor-ravi", "Ravi Mehta",
@@ -201,6 +322,28 @@ class VoiceReadOnlyAivaServiceScheduleTest {
         assertThat(dateOnlyResponse).contains("उस दिन consultation नहीं करते")
                 .doesNotContain("इस समय", "उस समय");
         assertThat(eveningResponse).contains("उस दिन शाम में consultation नहीं करते");
+    }
+
+    @Test
+    void speechAvailabilityUsesFullLanguageAppropriateMonthNames() {
+        LocalDate date = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")).plusDays(3);
+        VoiceAvailabilityData data = new VoiceAvailabilityData("doctor-ravi", "Ravi Mehta",
+                QueryType.EFFECTIVE_DATE_AVAILABILITY, date, null,
+                List.of(new VoiceScheduleWindow(date.getDayOfWeek(), LocalTime.of(9, 0), LocalTime.NOON,
+                        null, null, 30)), List.of(slot(date, 9, 0)),
+                List.of(Daypart.MORNING), List.of(), false, 0);
+
+        String hindi = service.renderAvailability(data, "hi-IN", ResponseStyle.STANDARD);
+        String hinglish = service.renderAvailability(data, "hi-IN", ResponseStyle.HINGLISH);
+        String english = service.renderAvailability(data, "en-IN", ResponseStyle.STANDARD);
+
+        String hindiDate = com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaSpokenDateFormatter
+                .format(date, "hi-IN", ResponseStyle.STANDARD);
+        String englishDate = com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaSpokenDateFormatter
+                .format(date, "en-IN", ResponseStyle.STANDARD);
+        assertThat(hindi).contains(hindiDate).doesNotMatch("(?s).*\\b(?:Oct|Nov)\\b.*");
+        assertThat(hinglish).contains(englishDate).doesNotMatch("(?s).*\\b(?:Oct|Nov)\\b.*");
+        assertThat(english).contains(englishDate).doesNotMatch("(?s).*\\b(?:Oct|Nov)\\b.*");
     }
 
     private VoiceSlot slot(LocalDate date, int hour, int minute) {

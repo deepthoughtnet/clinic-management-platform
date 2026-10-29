@@ -50,6 +50,7 @@ import org.junit.jupiter.api.Test;
 class AivaV2PocCertificationTest {
     private static final Instant NOW = Instant.parse("2026-09-10T00:00:00Z");
     private static final UUID PATIENT = UUID.randomUUID();
+    private static final UUID TENANT = UUID.fromString("720be1ee-f2ae-4dd9-b477-e05e3f97441a");
     private AivaV2BookingTools tools;
     private PatientPortalService patientPortalService;
     private AivaV2SessionStore store;
@@ -60,7 +61,7 @@ class AivaV2PocCertificationTest {
         patientPortalService = mock(PatientPortalService.class);
         store = new AivaV2SessionStore(Clock.fixed(NOW, ZoneOffset.UTC));
         when(patientPortalService.currentPatientId()).thenReturn(PATIENT);
-        RequestContextHolder.set(new RequestContext(new TenantId(UUID.fromString("720be1ee-f2ae-4dd9-b477-e05e3f97441a")),
+        RequestContextHolder.set(new RequestContext(new TenantId(TENANT),
                 PATIENT, "patient", Set.of("PATIENT"), "PATIENT", "corr-v2"));
         when(tools.criteriaFingerprint(any())).thenAnswer(invocation -> "fp-" + ((AivaV2Models.BookingDraft) invocation.getArgument(0)).revision());
         when(tools.abandonBooking(any())).thenAnswer(invocation -> {
@@ -88,7 +89,7 @@ class AivaV2PocCertificationTest {
             return ToolResult.success(new BookingConfirmation("confirm", draft.draftId(), draft.revision(),
                     akshu.providerHandle(), akshu.doctorId(), null, availability.requestId(), "slot-1630",
                     draft.preferredDate(), LocalTime.of(16, 30), NOW.plusSeconds(300), "idem"));
-        }).when(tools).prepareBooking(any(), any());
+        }).when(tools).prepareBooking(any(), any(), any());
         doReturn(ToolResult.success(new BookingReceipt("APT-1", "BOOKED", null)))
                 .when(tools).confirmBooking(any(), any());
         Queue<ConversationDecision> decisions = new ArrayDeque<>(List.of(
@@ -151,7 +152,7 @@ class AivaV2PocCertificationTest {
         var response = service(decisions).message(new MessageRequest(null, "Book Dr Arjun tomorrow", "en"));
 
         assertThat(response.responseCategory()).isEqualTo("CALL_TO_BOOK");
-        verify(tools, never()).getBookingAvailability(any());
+        verify(tools, never()).getBookingAvailability(any(), any());
         verify(tools, never()).confirmBooking(any(), any());
     }
 
@@ -231,15 +232,30 @@ class AivaV2PocCertificationTest {
             return ToolResult.success(new BookingConfirmation("confirm", draft.draftId(), draft.revision(),
                     akshu.providerHandle(), akshu.doctorId(), null, availability.requestId(), "slot-1630",
                     draft.preferredDate(), LocalTime.of(16, 30), NOW.plusSeconds(300), "idem"));
-        }).when(tools).prepareBooking(any(), any());
+        }).when(tools).prepareBooking(any(), any(), any());
         doReturn(ToolResult.success(new BookingReceipt("APT-1", "BOOKED", null)))
                 .when(tools).confirmBooking(any(), any());
     }
 
     private void stubResolvedProvider(ProviderCandidate provider) {
-        when(tools.resolveBookingProvider(any(), any(), any())).thenAnswer(invocation -> new ProviderSearchResult(
-                UUID.randomUUID(), ResolutionStatus.RESOLVED, "provider-fp", List.of(provider), provider,
-                NOW, NOW.plusSeconds(300)));
+        when(tools.resolveBookingProvider(any(), any(), any())).thenReturn(resolvedProvider(provider));
+        when(tools.resolveBookingProviderForTenant(any(), any(), any(), any(UUID.class)))
+                .thenAnswer(invocation -> ((UUID) invocation.getArgument(3)).toString().equals(provider.tenantId())
+                        ? resolvedProvider(provider) : new ProviderSearchResult(UUID.randomUUID(),
+                                ResolutionStatus.NOT_FOUND, "provider-fp", List.of(), null,
+                                NOW, NOW.plusSeconds(300)));
+        when(tools.adoptCanonicalBookingProvider(any(UUID.class), any(ProviderCandidate.class)))
+                .thenAnswer(invocation -> {
+                    UUID tenantId = invocation.getArgument(0);
+                    ProviderCandidate evidence = invocation.getArgument(1);
+                    return tenantId.toString().equals(provider.tenantId())
+                            && provider.doctorId().equals(evidence.doctorId()) ? provider : null;
+                });
+    }
+
+    private ProviderSearchResult resolvedProvider(ProviderCandidate provider) {
+        return new ProviderSearchResult(UUID.randomUUID(), ResolutionStatus.RESOLVED, "provider-fp",
+                List.of(provider), provider, NOW, NOW.plusSeconds(300));
     }
 
     private void stubAvailability() {
@@ -254,7 +270,7 @@ class AivaV2PocCertificationTest {
                             new AvailabilitySlot("slot-1700", LocalTime.of(17, 0), LocalTime.of(17, 30), "17:00"),
                             new AvailabilitySlot("slot-1730", LocalTime.of(17, 30), LocalTime.of(18, 0), "17:30")),
                     "3", true, NOW, NOW.plusSeconds(300)));
-        }).when(tools).getBookingAvailability(any());
+        }).when(tools).getBookingAvailability(any(), any());
     }
 
     private AivaV2ConversationService service(Queue<ConversationDecision> decisions) {
@@ -266,7 +282,7 @@ class AivaV2PocCertificationTest {
 
     private ProviderCandidate provider(String name, boolean online, boolean call) {
         return new ProviderCandidate("candidate-" + name, "provider-" + name, "doctor-" + name,
-                null, "720be1ee-f2ae-4dd9-b477-e05e3f97441a", null, null,
+                null, TENANT.toString(), null, null,
                 "Doc " + name + " Kumar", "General Medicine", "Clinic", ProviderSource.CARE_PRIVATE,
                 new ProviderCapabilities(online, online, call, call, call, true, false));
     }

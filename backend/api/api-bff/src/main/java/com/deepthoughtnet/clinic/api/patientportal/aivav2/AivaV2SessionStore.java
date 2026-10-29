@@ -333,21 +333,50 @@ class AivaV2SessionStore {
     }
 
     private Optional<SessionProjection> findRedis(String key) {
+        String redisKey = redisKey(key);
+        Object expiryValue;
         try {
-            String redisKey = redisKey(key);
-            Object expiryValue = redis.opsForHash().get(redisKey, "expiresAt");
-            String expiry = expiryValue == null ? null : expiryValue.toString();
-            if (expiry == null || Long.parseLong(expiry) <= Instant.now(clock).toEpochMilli()) {
+            expiryValue = redis.opsForHash().get(redisKey, "expiresAt");
+        } catch (RuntimeException ex) {
+            log.warn("AIVA_V2_SESSION_STORE read unavailable. keyHash={}", safeKeyHash(key));
+            throw new SessionStoreUnavailableException(ex);
+        }
+        String expiry = expiryValue == null ? null : expiryValue.toString();
+        if (expiry == null) {
+            try {
+                if (!Boolean.TRUE.equals(redis.hasKey(redisKey))) return Optional.empty();
+            } catch (RuntimeException ex) {
+                log.warn("AIVA_V2_SESSION_STORE presence check unavailable. keyHash={}", safeKeyHash(key));
+                throw new SessionStoreUnavailableException(ex);
+            }
+            log.warn("AIVA_V2_SESSION_STORE expiry missing from existing state. keyHash={}", safeKeyHash(key));
+            throw new SessionStoreCorruptException(new IllegalStateException("Session expiry is missing"));
+        }
+        try {
+            if (Long.parseLong(expiry) <= Instant.now(clock).toEpochMilli()) {
                 redis.delete(redisKey);
                 return Optional.empty();
             }
-            Object state = redis.opsForHash().get(redisKey, "state");
-            return state == null || state.toString().isBlank()
-                    ? Optional.empty() : Optional.of(read(state.toString(), SessionProjection.class));
+        } catch (NumberFormatException corruptExpiry) {
+            log.warn("AIVA_V2_SESSION_STORE expiry corrupt. keyHash={}", safeKeyHash(key));
+            throw new SessionStoreCorruptException(corruptExpiry);
         } catch (RuntimeException ex) {
-            log.warn("AIVA_V2_SESSION_STORE read failed; state rejected safely. keyHash={}", safeKeyHash(key));
-            redis.delete(redisKey(key));
-            return Optional.empty();
+            log.warn("AIVA_V2_SESSION_STORE expiry read unavailable. keyHash={}", safeKeyHash(key));
+            throw new SessionStoreUnavailableException(ex);
+        }
+        Object state;
+        try {
+            state = redis.opsForHash().get(redisKey, "state");
+        } catch (RuntimeException ex) {
+            log.warn("AIVA_V2_SESSION_STORE state read unavailable. keyHash={}", safeKeyHash(key));
+            throw new SessionStoreUnavailableException(ex);
+        }
+        if (state == null || state.toString().isBlank()) return Optional.empty();
+        try {
+            return Optional.of(read(state.toString(), SessionProjection.class));
+        } catch (RuntimeException corruptState) {
+            log.warn("AIVA_V2_SESSION_STORE state corrupt; retained for safe recovery. keyHash={}", safeKeyHash(key));
+            throw new SessionStoreCorruptException(corruptState);
         }
     }
 
@@ -437,6 +466,14 @@ class AivaV2SessionStore {
     }
 
     private String safeKeyHash(String key) { return Integer.toHexString(key == null ? 0 : key.hashCode()); }
+
+    static final class SessionStoreUnavailableException extends IllegalStateException {
+        SessionStoreUnavailableException(Throwable cause) { super("AIVA V2 session state unavailable", cause); }
+    }
+
+    static final class SessionStoreCorruptException extends IllegalStateException {
+        SessionStoreCorruptException(Throwable cause) { super("AIVA V2 session state is corrupt", cause); }
+    }
 
     private static final class DistributedTurnContext {
         private final String key;

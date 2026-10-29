@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.AivaResponseComposerPr
 import com.deepthoughtnet.clinic.api.notifications.AppointmentReminderProperties;
 import com.deepthoughtnet.clinic.api.lab.service.LabReportVerificationProperties;
 import com.deepthoughtnet.clinic.api.ops.PlatformOpsReleaseProperties;
+import com.deepthoughtnet.clinic.api.platform.communicationtest.VoiceTransactionAuthProperties;
+import com.deepthoughtnet.clinic.api.platform.communicationtest.VoiceOperatorProperties;
 import com.deepthoughtnet.clinic.notification.service.NotificationProperties;
 import com.deepthoughtnet.clinic.api.notifications.NotificationsSchedulerProperties;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
@@ -23,7 +25,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         CareAiTaskSlaProperties.class,
         AivaResponseComposerProperties.class,
         LabReportVerificationProperties.class,
-        PlatformOpsReleaseProperties.class
+        PlatformOpsReleaseProperties.class,
+        VoiceTransactionAuthProperties.class,
+        VoiceOperatorProperties.class
 })
 public class ApiBffApplication {
     public static void main(String[] args) {

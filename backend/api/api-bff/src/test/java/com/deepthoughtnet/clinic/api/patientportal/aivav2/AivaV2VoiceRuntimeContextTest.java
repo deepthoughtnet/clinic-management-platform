@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.HealthcareAiReadOnlyTo
 import com.deepthoughtnet.clinic.api.patientportal.careai.HealthcareAiReadOnlyToolGateway.VoiceScheduleWindow;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
 import com.deepthoughtnet.clinic.api.platform.communicationtest.VoiceReadOnlyAivaService;
+import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -22,8 +23,34 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 class AivaV2VoiceRuntimeContextTest {
+    @Test
+    void singleMatchVoiceCallerRemainsIdentifiedButUnauthenticatedWithoutInstallingPortalContexts() {
+        RequestContextHolder.clear();
+        SecurityContextHolder.clearContext();
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var runtime = new VoiceReadOnlyAivaService(mock(HealthcareAiReadOnlyToolGateway.class), adapter);
+        UUID tenant = UUID.randomUUID();
+        UUID patient = UUID.randomUUID();
+        var call = new VoiceReadOnlyAivaService.Context("auth-boundary-call", UUID.randomUUID(), tenant,
+                null, null, null, "hi-IN", "SINGLE_MATCH", "IDENTIFIED_PATIENT", patient);
+
+        var result = runtime.continueTurn(call, "मेरा appointment book कर दीजिए");
+
+        assertThat(result.intent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(result.policyDecision()).isEqualTo("DENIED");
+        assertThat(result.toolExecutionStatus()).isEqualTo("BLOCKED");
+        assertThat(result.runtimeDiagnostics().get("transactionAuthorization")).isNotNull();
+        assertThat(store.find("VOICE|" + tenant + "|auth-boundary-call").orElseThrow().patientId()).isNull();
+        assertThat(RequestContextHolder.get()).isNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        SecurityContextHolder.clearContext();
+    }
+
     @Test
     void exactDotVoiceServiceSequenceCarriesFilteredSingleProviderIntoTomorrowAvailability() {
         HealthcareAiReadOnlyToolGateway gateway = mock(HealthcareAiReadOnlyToolGateway.class);

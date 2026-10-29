@@ -17,6 +17,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Resolutio
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Selection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ToolResult;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DevanagariNameTransliterator;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DoctorNameNormalizer;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityDayResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorAvailabilityResponse;
@@ -26,7 +27,6 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiEnt
 import com.deepthoughtnet.clinic.api.patientportal.careai.SpecialtyResolver;
 import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
-import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -53,6 +55,7 @@ class AivaV2BookingTools {
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final Clock clock;
     private final SpecialtyResolver specialtyResolver = new SpecialtyResolver(new PatientPortalCareAiEntityRegistry());
+    private Environment environment;
 
     @Autowired
     AivaV2BookingTools(PatientPortalService patientPortalService, PublicCatalogFacade publicCatalogFacade,
@@ -70,6 +73,11 @@ class AivaV2BookingTools {
         this.publicCatalogFacade = publicCatalogFacade;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.clock = clock;
+    }
+
+    @Autowired
+    void setEnvironment(Environment environment) {
+        this.environment = environment;
     }
 
     ProviderSearchResult resolveBookingProvider(String doctorText, String specialtyText) {
@@ -93,9 +101,38 @@ class AivaV2BookingTools {
     }
 
     ProviderSearchResult resolveBookingProvider(String doctorText, String specialtyText, String clinicText) {
+        return resolveBookingProvider(doctorText, specialtyText, clinicText, mergedProviders());
+    }
+
+    /** Voice preparation resolves only inside the tenant supplied by trusted DID routing. */
+    ProviderSearchResult resolveBookingProviderForTenant(String doctorText, String specialtyText,
+                                                          String clinicText, UUID tenantId) {
+        return resolveBookingProvider(doctorText, specialtyText, clinicText, mergedProviders(tenantId));
+    }
+
+    /**
+     * Canonical boundary for any provider candidate entering a transactional draft.
+     * Discovery projections are resolved against the trusted tenant and their identity
+     * is checked against the canonical result before a draft may retain them.
+     */
+    ProviderCandidate adoptCanonicalBookingProvider(UUID tenantId, ProviderCandidate evidence) {
+        if (tenantId == null || evidence == null || !StringUtils.hasText(evidence.doctorId())) return null;
+        if (!StringUtils.hasText(evidence.displayName())) return null;
+        ProviderSearchResult result = resolveBookingProviderForTenant(
+                evidence.displayName(), null, evidence.clinicSlug(), tenantId);
+        ProviderCandidate canonical = result == null || result.status() != ResolutionStatus.RESOLVED
+                ? null : result.resolvedProvider();
+        if (canonical == null || !evidence.doctorId().equals(canonical.doctorId())
+                || !tenantId.toString().equals(canonical.tenantId())
+                || (StringUtils.hasText(evidence.clinicId())
+                && !evidence.clinicId().equals(canonical.clinicId()))) return null;
+        return canonical;
+    }
+
+    private ProviderSearchResult resolveBookingProvider(String doctorText, String specialtyText, String clinicText,
+                                                          List<ProviderCandidate> all) {
         Instant now = Instant.now(clock);
         String fingerprint = fingerprint("provider", normalize(doctorText), normalize(specialtyText), normalize(clinicText));
-        List<ProviderCandidate> all = mergedProviders();
         log.info("AIVA_V2_PROVIDER_TRACE authorizedClinicCount={} providerCandidateCount={} candidateClinicCount={}",
                 all.stream().map(ProviderCandidate::tenantId).filter(StringUtils::hasText).distinct().count(),
                 all.size(), all.stream().map(ProviderCandidate::clinicDisplayName).filter(StringUtils::hasText).distinct().count());
@@ -112,7 +149,8 @@ class AivaV2BookingTools {
 
         String query = normalizeDoctorName(doctorText);
         List<ProviderCandidate> exact = specialtyMatches.stream()
-                .filter(candidate -> normalizeDoctorName(candidate.displayName()).equals(query))
+                .filter(candidate -> normalizeDoctorName(candidate.displayName()).equals(query)
+                        || DoctorNameNormalizer.matches(candidate.displayName(), doctorText))
                 .toList();
         if (!exact.isEmpty()) {
             return resultForCandidates(fingerprint, exact, now, false);
@@ -135,33 +173,36 @@ class AivaV2BookingTools {
                 List.of(), null, now, now.plusSeconds(5 * 60));
     }
 
-    ToolResult<AvailabilityResult> getBookingAvailability(BookingDraft draft) {
+    ToolResult<AvailabilityResult> getBookingAvailability(BookingDraft draft, UUID tenantId) {
+        if (tenantId == null) return ToolResult.failure("TENANT_REQUIRED", "Tenant scope is required.");
         if (draft == null || draft.selectedProvider() == null || draft.preferredDate() == null) {
             return ToolResult.failure("NEEDS_INPUT", "Provider and date are required.");
         }
         return getAvailability(draft.selectedProvider(), draft.preferredDate(), draft.preferredTimeWindow(),
-                draft.availabilityTimeConstraint(), draft.draftId(), draft.revision(), criteriaFingerprint(draft));
+                effectiveConstraint(draft), draft.draftId(), draft.revision(), criteriaFingerprint(draft), tenantId);
     }
 
-    ToolResult<AvailabilityResult> getNextBookingAvailability(BookingDraft draft) {
+    ToolResult<AvailabilityResult> getNextBookingAvailability(BookingDraft draft, UUID tenantId) {
+        if (tenantId == null) return ToolResult.failure("TENANT_REQUIRED", "Tenant scope is required.");
         if (draft == null || draft.selectedProvider() == null || draft.preferredDate() == null) {
             return ToolResult.failure("NEEDS_INPUT", "Provider and date are required.");
         }
         ProviderCandidate provider = draft.selectedProvider();
-        if (!provider.capabilities().onlineBooking() || !provider.capabilities().liveAvailability()) {
+        if (provider.capabilities() == null || !provider.capabilities().onlineBooking()
+                || !provider.capabilities().liveAvailability()) {
             return ToolResult.failure("NOT_BOOKABLE", "Online scheduling is not connected for this doctor.");
         }
         try {
             PatientPortalDoctorAvailabilityResponse response = patientPortalService.doctorAvailability(
                     provider.bookingReference(), provider.doctorId(), provider.clinicSlug(),
-                    provider.tenantId(), provider.clinicId(), draft.preferredDate());
+                    tenantId.toString(), provider.clinicId(), draft.preferredDate());
             PatientPortalDoctorAvailabilityDayResponse next = response == null || response.nextAvailable() == null
                     ? null
                     : response.nextAvailable().stream()
                     .filter(day -> day != null && day.appointmentDate() != null
                             && day.appointmentDate().isAfter(draft.preferredDate()))
                     .map(day -> new PatientPortalDoctorAvailabilityDayResponse(day.appointmentDate(),
-                            filteredSlots(day.slots(), draft.preferredTimeWindow(), draft.availabilityTimeConstraint())))
+                            filteredSlots(day.slots(), draft.preferredTimeWindow(), effectiveConstraint(draft))))
                     .filter(day -> day.slots() != null && !day.slots().isEmpty())
                     .findFirst().orElse(null);
             if (next == null) return ToolResult.failure("NO_FUTURE_AVAILABILITY",
@@ -169,14 +210,14 @@ class AivaV2BookingTools {
             Instant now = Instant.now(clock);
             ZoneId zone = clinicTimeZoneResolver == null
                     ? ZoneId.of("Asia/Kolkata")
-                    : clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
+                    : clinicTimeZoneResolver.resolve(tenantId);
             List<AvailabilitySlot> slots = next.slots().stream()
                     .map(slot -> new AvailabilitySlot(slot.slotReference(), slot.slotTime(), slot.slotEndTime(),
                             slot.slotTime() == null ? null : slot.slotTime().toString()))
                     .toList();
             return ToolResult.success(new AvailabilityResult(UUID.randomUUID(), draft.draftId(), draft.revision(),
                     criteriaFingerprint(draft), provider.providerHandle(), provider.doctorId(), provider.clinicId(),
-                    next.appointmentDate(), draft.preferredTimeWindow(), draft.availabilityTimeConstraint(), zone.getId(),
+                    next.appointmentDate(), draft.preferredTimeWindow(), effectiveConstraint(draft), zone.getId(),
                     slots, null, slots.size() > 3, now, now.plusSeconds(5 * 60), 0, 3));
         } catch (org.springframework.web.server.ResponseStatusException ex) {
             return ToolResult.failure(ex.getStatusCode().value() == 409 ? "STALE" : "NOT_BOOKABLE", ex.getReason());
@@ -198,19 +239,24 @@ class AivaV2BookingTools {
 
     ToolResult<AvailabilityResult> getAvailability(ProviderCandidate provider, LocalDate date, String timeWindow,
                                                    AvailabilityTimeConstraint constraint, UUID stateId, long stateRevision,
-                                                   String requestedFingerprint) {
+                                                   String requestedFingerprint, UUID tenantId) {
+        if (tenantId == null) return ToolResult.failure("TENANT_REQUIRED", "Tenant scope is required.");
         if (provider == null || date == null) {
             return ToolResult.failure("NEEDS_INPUT", "Provider and date are required.");
         }
-        if (!provider.capabilities().onlineBooking() || !provider.capabilities().liveAvailability()) {
+        if (provider.capabilities() == null || !provider.capabilities().onlineBooking()
+                || !provider.capabilities().liveAvailability()) {
             return ToolResult.failure("NOT_BOOKABLE", "Online scheduling is not connected for this doctor.");
         }
+        String stage = "CANONICAL_AVAILABILITY";
         try {
-            var response = patientPortalService.doctorAvailability(
-                    provider.bookingReference(), provider.doctorId(), provider.clinicSlug(),
-                    provider.tenantId(), provider.clinicId(), date);
-            List<PatientPortalDoctorSlotResponse> source = response == null || response.slots() == null
-                    ? List.of() : response.slots();
+            stage = "PatientPortalService.doctorSlotsForTenant";
+            log.info("AIVA_V2_AVAILABILITY_CALL_START stage={} tenantId={} providerId={} date={}",
+                    stage, tenantId, provider.doctorId(), date);
+            List<PatientPortalDoctorSlotResponse> source = canonicalSlots(provider, date, tenantId);
+            log.info("AIVA_V2_AVAILABILITY_CALL_RESULT tenantId={} providerId={} date={} slotCount={} success=true",
+                    tenantId, provider.doctorId(), date, source == null ? 0 : source.size());
+            stage = "SLOT_FILTERING";
             List<AvailabilitySlot> slots = source.stream()
                     .filter(PatientPortalDoctorSlotResponse::selectable)
                     .filter(slot -> matchesWindow(slot.slotTime(), timeWindow))
@@ -219,9 +265,10 @@ class AivaV2BookingTools {
                             slot.slotTime() == null ? null : slot.slotTime().toString()))
                     .toList();
             Instant now = Instant.now(clock);
+            stage = "TENANT_TIMEZONE_RESOLUTION";
             ZoneId zone = clinicTimeZoneResolver == null
                     ? ZoneId.of("Asia/Kolkata")
-                    : clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
+                    : clinicTimeZoneResolver.resolve(tenantId);
             AvailabilityResult result = new AvailabilityResult(UUID.randomUUID(), stateId, stateRevision,
                     StringUtils.hasText(requestedFingerprint) ? requestedFingerprint : fingerprint("availability", provider.providerHandle(), provider.doctorId(), provider.clinicId(),
                             provider.tenantId(), date.toString(), timeWindow, String.valueOf(constraint)),
@@ -231,23 +278,63 @@ class AivaV2BookingTools {
         } catch (org.springframework.web.server.ResponseStatusException ex) {
             return ToolResult.failure(ex.getStatusCode().value() == 409 ? "STALE" : "NOT_BOOKABLE", ex.getReason());
         } catch (RuntimeException ex) {
+            Throwable root = rootCause(ex);
+            if (isLocalRuntime()) {
+                log.warn("AIVA_V2_BOOKING_AVAILABILITY_FAILED stage={} providerId={} tenantId={} date={} "
+                                + "exceptionClass={} exceptionMessage={} rootCauseClass={} rootCauseMessage={}",
+                        stage, provider.doctorId(), tenantId, date, ex.getClass().getName(), ex.getMessage(),
+                        root.getClass().getName(), root.getMessage(), ex);
+            } else {
+                log.warn("AIVA_V2_BOOKING_AVAILABILITY_FAILED stage={} providerId={} tenantId={} date={} exceptionClass={}",
+                        stage, provider.doctorId(), tenantId, date, ex.getClass().getName());
+            }
             return ToolResult.failure("FAILED", "Availability could not be retrieved.");
         }
     }
 
-    ToolResult<BookingConfirmation> prepareBooking(BookingDraft draft, AvailabilityResult availability) {
-        if (draft == null || availability == null || draft.selectedProvider() == null
-                || draft.revision() != availability.draftRevision()
-                || !availability.requestId().equals(draft.latestAvailabilityRequestId())
-                || !StringUtils.hasText(draft.selectedSlotReference())) {
-            return ToolResult.failure("STALE", "The selected availability is no longer current.");
+    private boolean isLocalRuntime() {
+        if (environment == null) return false;
+        String configuredEnvironment = environment.getProperty("JEEVANAM_ENVIRONMENT");
+        if (StringUtils.hasText(configuredEnvironment)) {
+            return "LOCAL".equalsIgnoreCase(configuredEnvironment.trim());
         }
-        ToolResult<AvailabilityResult> refreshed = getBookingAvailability(draft);
-        if (!"SUCCESS".equals(refreshed.category())) return ToolResult.failure(refreshed.category(), refreshed.safeReason());
-        AvailabilitySlot selected = refreshed.value().slots().stream()
-                .filter(slot -> draft.selectedSlotReference().equals(slot.slotReference()))
-                .findFirst().orElse(null);
-        if (selected == null) return ToolResult.failure("STALE", "The selected slot is no longer available.");
+        return environment.acceptsProfiles(Profiles.of("local", "docker"));
+    }
+
+    private Throwable rootCause(Throwable exception) {
+        Throwable current = exception;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    /** Compatibility boundary retained for the existing reschedule adapter. */
+    ToolResult<AvailabilityResult> getAvailability(ProviderCandidate provider, LocalDate date, String timeWindow,
+                                                   AvailabilityTimeConstraint constraint, UUID stateId,
+                                                   long stateRevision, String requestedFingerprint) {
+        UUID tenantId = provider == null ? null : parseTenantId(provider.tenantId());
+        return getAvailability(provider, date, timeWindow, constraint, stateId, stateRevision,
+                requestedFingerprint, tenantId);
+    }
+
+    /**
+     * Use the same tenant-scoped AppointmentService.listSlots source as Voice
+     * FIND_SLOTS. The portal-facing doctorAvailability method requires an
+     * authenticated Patient Portal request context and is not a Voice boundary.
+     */
+    private List<PatientPortalDoctorSlotResponse> canonicalSlots(ProviderCandidate provider, LocalDate date,
+                                                                 UUID tenantId) {
+        return patientPortalService.doctorSlotsForTenant(tenantId, provider.doctorId(),
+                provider.bookingReference(), date);
+    }
+
+    ToolResult<BookingConfirmation> prepareBooking(BookingDraft draft, AvailabilityResult availability, UUID tenantId) {
+        ToolResult<RevalidatedBookingSlot> revalidated = revalidateBookingSlot(draft, availability, tenantId);
+        if (!"SUCCESS".equals(revalidated.category())) {
+            return ToolResult.failure(revalidated.category(), revalidated.safeReason());
+        }
+        AvailabilitySlot selected = revalidated.value().slot();
         Instant now = Instant.now(clock);
         String confirmationRef = "v2-confirm-" + UUID.randomUUID();
         BookingConfirmation confirmation = new BookingConfirmation(confirmationRef, draft.draftId(), draft.revision(),
@@ -257,6 +344,29 @@ class AivaV2BookingTools {
                 "aiva-v2-" + UUID.nameUUIDFromBytes(confirmationRef.getBytes(StandardCharsets.UTF_8)));
         return ToolResult.success(confirmation);
     }
+
+    /** Revalidates a selected canonical slot without creating confirmation or executing a mutation. */
+    ToolResult<RevalidatedBookingSlot> revalidateBookingSlot(BookingDraft draft, AvailabilityResult availability,
+                                                              UUID tenantId) {
+        if (tenantId == null) return ToolResult.failure("TENANT_REQUIRED", "Tenant scope is required.");
+        if (draft == null || availability == null || draft.selectedProvider() == null
+                || draft.revision() != availability.draftRevision()
+                || !availability.requestId().equals(draft.latestAvailabilityRequestId())
+                || !StringUtils.hasText(draft.selectedSlotReference())) {
+            return ToolResult.failure("STALE", "The selected availability is no longer current.");
+        }
+        ToolResult<AvailabilityResult> refreshed = getBookingAvailability(draft, tenantId);
+        if (!"SUCCESS".equals(refreshed.category())) {
+            return ToolResult.failure(refreshed.category(), refreshed.safeReason());
+        }
+        AvailabilitySlot selected = refreshed.value().slots().stream()
+                .filter(slot -> draft.selectedSlotReference().equals(slot.slotReference()))
+                .findFirst().orElse(null);
+        if (selected == null) return ToolResult.failure("STALE", "The selected slot is no longer available.");
+        return ToolResult.success(new RevalidatedBookingSlot(refreshed.value(), selected));
+    }
+
+    record RevalidatedBookingSlot(AvailabilityResult availability, AvailabilitySlot slot) { }
 
     ToolResult<AvailabilitySlot> selectBookingSlot(BookingDraft draft, AvailabilityResult availability, Selection selection) {
         if (draft == null || availability == null || selection == null
@@ -344,6 +454,12 @@ class AivaV2BookingTools {
                 String.valueOf(draft.revision()));
     }
 
+    private AvailabilityTimeConstraint effectiveConstraint(BookingDraft draft) {
+        if (draft.availabilityTimeConstraint() != null) return draft.availabilityTimeConstraint();
+        return draft.exactTime() == null ? null
+                : new AvailabilityTimeConstraint(AvailabilityTimeConstraintMode.EXACT, draft.exactTime(), null);
+    }
+
     private ProviderSearchResult resultForCandidates(String fingerprint, List<ProviderCandidate> candidates, Instant now, boolean suggestion) {
         if (candidates.isEmpty()) {
             return new ProviderSearchResult(UUID.randomUUID(), ResolutionStatus.NOT_FOUND, fingerprint,
@@ -375,7 +491,19 @@ class AivaV2BookingTools {
         return List.copyOf(merged.values());
     }
 
+    private List<ProviderCandidate> mergedProviders(UUID tenantId) {
+        if (tenantId == null) return List.of();
+        List<PatientPortalCareAiDoctorOption> privateDoctors = patientPortalService.careAiDoctorsForTenant(tenantId);
+        if (privateDoctors == null) return List.of();
+        return privateDoctors.stream()
+                .filter(doctor -> tenantId.equals(doctor.tenantId()))
+                .map(this::privateCandidate)
+                .toList();
+    }
+
     private ProviderCandidate privateCandidate(PatientPortalCareAiDoctorOption doctor) {
+        // Active tenant doctors use the local AppointmentService slot path; an external
+        // booking target is not part of CARE_PRIVATE bookability.
         String tenant = doctor.tenantId().toString();
         String handle = handle(ProviderSource.CARE_PRIVATE, doctor.publicDoctorId(), tenant, doctor.clinicSlug());
         return new ProviderCandidate(handle, handle, doctor.publicDoctorId(),
@@ -408,7 +536,11 @@ class AivaV2BookingTools {
     private String fingerprint(String... values) {
         return UUID.nameUUIDFromBytes(String.join("|", values).getBytes(StandardCharsets.UTF_8)).toString();
     }
-    private String tenantId() { return RequestContextHolder.requireTenantId().toString(); }
+    private UUID parseTenantId(String value) {
+        if (!StringUtils.hasText(value)) return null;
+        try { return UUID.fromString(value); }
+        catch (IllegalArgumentException ignored) { return null; }
+    }
     private String blank(String value) { return value == null ? "" : value; }
     private String normalize(String value) { return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", " ").trim(); }
     private String normalizeDoctorName(String value) {

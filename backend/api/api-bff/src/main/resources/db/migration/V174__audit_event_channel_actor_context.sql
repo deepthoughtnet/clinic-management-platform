@@ -1,0 +1,7 @@
+ALTER TABLE audit_events
+    ADD COLUMN IF NOT EXISTS actor_type VARCHAR(48),
+    ADD COLUMN IF NOT EXISTS actor_id VARCHAR(128),
+    ADD COLUMN IF NOT EXISTS channel VARCHAR(32),
+    ADD COLUMN IF NOT EXISTS interaction_id UUID,
+    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(128);
+

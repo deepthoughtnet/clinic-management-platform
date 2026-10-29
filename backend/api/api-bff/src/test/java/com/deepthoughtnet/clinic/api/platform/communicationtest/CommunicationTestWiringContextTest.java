@@ -6,6 +6,7 @@ import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.patientportal.careai.HealthcareAiReadOnlyToolGateway;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceConversationAdapter;
+import com.deepthoughtnet.clinic.api.patientportal.auth.PatientPortalOtpService;
 import com.deepthoughtnet.clinic.carepilot.ai_call.provider.DotVoiceMediaStreamClient;
 import com.deepthoughtnet.clinic.carepilot.ai_call.provider.DotVoiceProviderConfig;
 import com.deepthoughtnet.clinic.carepilot.ai_call.service.VoiceConversationContextRegistry;
@@ -138,6 +139,16 @@ class CommunicationTestWiringContextTest {
         @Bean
         PatientService patientService() {
             return mock(PatientService.class);
+        }
+
+        @Bean
+        PatientPortalOtpService patientPortalOtpService() {
+            return mock(PatientPortalOtpService.class);
+        }
+
+        @Bean
+        VoiceTransactionPolicyResolver voiceTransactionPolicyResolver() {
+            return new VoiceTransactionPolicyResolver(new VoiceTransactionAuthProperties());
         }
 
         @Bean

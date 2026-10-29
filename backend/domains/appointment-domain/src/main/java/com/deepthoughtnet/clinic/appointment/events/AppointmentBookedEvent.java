@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import com.deepthoughtnet.clinic.platform.audit.AuditActorContext;
 import org.slf4j.MDC;
 
 /**
@@ -26,6 +27,9 @@ public record AppointmentBookedEvent(
         String correlationId,
         String causationId,
         UUID actorId,
+        String actorType,
+        String channel,
+        UUID interactionId,
         AppointmentBookedEventPayload payload
 ) implements ModuleBusinessEvent {
     public static AppointmentBookedEvent booked(
@@ -41,8 +45,27 @@ public record AppointmentBookedEvent(
             String appointmentType,
             UUID actorId
     ) {
+        return booked(tenantId, appointmentId, patientId, doctorUserId, doctorDisplayName, appointmentDate,
+                appointmentTime, appointmentTimezone, appointmentStatus, appointmentType, actorId, null);
+    }
+
+    public static AppointmentBookedEvent booked(
+            UUID tenantId,
+            UUID appointmentId,
+            UUID patientId,
+            UUID doctorUserId,
+            String doctorDisplayName,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String appointmentTimezone,
+            String appointmentStatus,
+            String appointmentType,
+            UUID actorId,
+            AuditActorContext actorContext
+    ) {
         OffsetDateTime occurredAt = OffsetDateTime.now();
-        String correlationId = currentCorrelationId();
+        String correlationId = actorContext != null && actorContext.correlationId() != null
+                ? actorContext.correlationId() : currentCorrelationId();
         return new AppointmentBookedEvent(
                 deterministicEventId("APPOINTMENT_BOOKED", tenantId, appointmentId),
                 "APPOINTMENT_BOOKED",
@@ -55,6 +78,9 @@ public record AppointmentBookedEvent(
                 correlationId,
                 correlationId,
                 actorId,
+                actorContext == null ? null : actorContext.actorType(),
+                actorContext == null ? null : actorContext.channel(),
+                actorContext == null ? null : actorContext.interactionId(),
                 new AppointmentBookedEventPayload(
                         appointmentId,
                         patientId,

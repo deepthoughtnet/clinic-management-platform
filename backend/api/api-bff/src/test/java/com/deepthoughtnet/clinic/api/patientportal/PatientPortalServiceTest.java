@@ -67,6 +67,7 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessReques
 import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAccessRequestType;
 import com.deepthoughtnet.clinic.patient.service.model.PatientPortalAuthorizedClinicRecord;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
+import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
 import com.deepthoughtnet.clinic.api.patientportal.auth.PatientPortalSessionTokenService;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
@@ -170,6 +171,13 @@ class PatientPortalServiceTest {
         idempotencyService = mock(IdempotencyService.class);
         objectMapper = new ObjectMapper().findAndRegisterModules();
         healthcareAvailabilityPort = mock(HealthcareAvailabilityPort.class);
+        when(patientService.findById(any(UUID.class), any(UUID.class))).thenAnswer(invocation -> {
+            UUID tenantId = invocation.getArgument(0);
+            UUID patientId = invocation.getArgument(1);
+            return Optional.of(new PatientRecord(patientId, tenantId, "TEST", "Test", "Patient",
+                    null, null, null, null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null, null, true, null, null));
+        });
         service = new PatientPortalService(
                 appUserRepository,
                 tenantRepository,
@@ -605,7 +613,7 @@ class PatientPortalServiceTest {
         when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile(doctorUserId)));
         when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
                 .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, java.time.LocalTime.of(10, 30), DoctorAvailabilitySlotStatus.AVAILABLE, true)));
-        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any()))
+        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any(), any()))
                 .thenReturn(appointment);
         when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(appointment));
 
@@ -620,7 +628,7 @@ class PatientPortalServiceTest {
         ));
 
         ArgumentCaptor<AppointmentUpsertCommand> commandCaptor = ArgumentCaptor.forClass(AppointmentUpsertCommand.class);
-        verify(appointmentService).createScheduled(eq(TENANT_ID), commandCaptor.capture(), eq(APP_USER_ID), eq(false), any());
+        verify(appointmentService).createScheduled(eq(TENANT_ID), commandCaptor.capture(), eq(APP_USER_ID), eq(false), any(), any());
         assertThat(commandCaptor.getValue().patientId()).isEqualTo(PATIENT_ID);
         assertThat(commandCaptor.getValue().doctorUserId()).isEqualTo(doctorUserId);
         assertThat(commandCaptor.getValue().type()).isEqualTo(AppointmentType.SCHEDULED);
@@ -649,7 +657,7 @@ class PatientPortalServiceTest {
         when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.empty());
         when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
                 .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, java.time.LocalTime.of(10, 30), DoctorAvailabilitySlotStatus.AVAILABLE, true)));
-        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any()))
+        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any(), any()))
                 .thenReturn(appointment);
         when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(appointment));
 
@@ -670,7 +678,56 @@ class PatientPortalServiceTest {
         ));
 
         assertThat(confirmation.clinicName()).isEqualTo("Sunrise Clinic");
-        verify(appointmentService).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any());
+        verify(appointmentService).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any(), any());
+    }
+
+    @Test
+    void tenantScopedVoiceSlotsPassTheSuppliedTenantUnchangedToAppointmentService() {
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate appointmentDate = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(2);
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.empty());
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
+                .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, LocalTime.of(10, 30),
+                        DoctorAvailabilitySlotStatus.AVAILABLE, true)));
+
+        var slots = service.doctorSlotsForTenant(TENANT_ID, doctorUserId.toString(), appointmentDate);
+
+        assertThat(slots).hasSize(1);
+        verify(appointmentService).listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any());
+    }
+
+    @Test
+    void tenantScopedCarePrivateSlotsIgnoreStalePublicBookingReference() {
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate appointmentDate = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(2);
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.empty());
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
+                .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, LocalTime.of(10, 30),
+                        DoctorAvailabilitySlotStatus.AVAILABLE, true)));
+
+        var slots = service.doctorSlotsForTenant(TENANT_ID, doctorUserId.toString(),
+                "stale-public-projection-reference", appointmentDate);
+
+        assertThat(slots).hasSize(1);
+        verify(appointmentService).listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any());
+        verify(healthcareAvailabilityPort, never()).resolveBookingTarget(any());
+    }
+
+    @Test
+    void tenantScopedExternalSlotsStillRequireResolvableBookingTargetWhenNoLocalDoctorExists() {
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate appointmentDate = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(2);
+        when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of());
+        when(healthcareAvailabilityPort.resolveBookingTarget(any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.doctorSlotsForTenant(TENANT_ID, doctorUserId.toString(),
+                "unresolved-external-target", appointmentDate))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Selected booking target could not be resolved.");
+        verify(healthcareAvailabilityPort).resolveBookingTarget(any());
+        verify(appointmentService, never()).listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any());
     }
 
     @Test
@@ -678,9 +735,14 @@ class PatientPortalServiceTest {
         AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
         appUser.setPatientId(PATIENT_ID);
         PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        AppointmentRecord past = appointmentRecord(PATIENT_ID, UUID.randomUUID(), today, LocalTime.now(ZoneId.of("Asia/Kolkata")).minusHours(2));
-        AppointmentRecord future = appointmentRecord(PATIENT_ID, UUID.randomUUID(), today.plusDays(1), LocalTime.now(ZoneId.of("Asia/Kolkata")).plusHours(2));
+        ZoneId clinicZone = ZoneId.of("Asia/Kolkata");
+        java.time.ZonedDateTime referenceNow = java.time.ZonedDateTime.now(clinicZone);
+        java.time.ZonedDateTime pastStart = referenceNow.minusHours(2);
+        java.time.ZonedDateTime futureStart = referenceNow.plusDays(1).plusHours(2);
+        AppointmentRecord past = appointmentRecord(PATIENT_ID, UUID.randomUUID(), pastStart.toLocalDate(),
+                pastStart.toLocalTime());
+        AppointmentRecord future = appointmentRecord(PATIENT_ID, UUID.randomUUID(), futureStart.toLocalDate(),
+                futureStart.toLocalTime());
 
         when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
         when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
@@ -1004,7 +1066,7 @@ class PatientPortalServiceTest {
         when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile));
         when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
                 .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, appointmentTime, DoctorAvailabilitySlotStatus.AVAILABLE, true)));
-        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any()))
+        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any(), any()))
                 .thenReturn(booked);
         when(idempotencyService.findCachedResponse(any(), eq("booking-key-1"), anyString()))
                 .thenReturn(Optional.empty(), Optional.of(objectMapper.writeValueAsString(expected)));
@@ -1034,7 +1096,7 @@ class PatientPortalServiceTest {
 
         assertThat(first).isEqualTo(expected);
         assertThat(second).isEqualTo(expected);
-        verify(appointmentService, times(1)).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any());
+        verify(appointmentService, times(1)).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any(), any());
         verify(idempotencyService, times(1)).storeResponse(any(), eq("booking-key-1"), anyString(), anyString());
     }
 
@@ -1103,7 +1165,7 @@ class PatientPortalServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("no longer available");
 
-        verify(appointmentService, never()).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any());
+        verify(appointmentService, never()).createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any(), any());
     }
 
     @Test
@@ -1247,7 +1309,7 @@ class PatientPortalServiceTest {
                 .thenReturn(Optional.of(AppUserEntity.create(OTHER_TENANT_ID, "patientportal:" + OTHER_TENANT_ID + ":" + targetPatientId, "riya@example.com", "Riya Sharma")));
         when(appointmentService.listSlots(eq(OTHER_TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
                 .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, java.time.LocalTime.of(11, 30), DoctorAvailabilitySlotStatus.AVAILABLE, true)));
-        when(appointmentService.createScheduled(eq(OTHER_TENANT_ID), any(AppointmentUpsertCommand.class), eq(targetActorAppUserId), eq(false), any()))
+        when(appointmentService.createScheduled(eq(OTHER_TENANT_ID), any(AppointmentUpsertCommand.class), eq(targetActorAppUserId), eq(false), any(), any()))
                 .thenReturn(appointment);
         when(appointmentService.listByPatient(eq(OTHER_TENANT_ID), eq(targetPatientId))).thenReturn(List.of(appointment));
 
@@ -1262,7 +1324,7 @@ class PatientPortalServiceTest {
         ));
 
         ArgumentCaptor<AppointmentUpsertCommand> commandCaptor = ArgumentCaptor.forClass(AppointmentUpsertCommand.class);
-        verify(appointmentService).createScheduled(eq(OTHER_TENANT_ID), commandCaptor.capture(), eq(targetActorAppUserId), eq(false), any());
+        verify(appointmentService).createScheduled(eq(OTHER_TENANT_ID), commandCaptor.capture(), eq(targetActorAppUserId), eq(false), any(), any());
         assertThat(commandCaptor.getValue().patientId()).isEqualTo(targetPatientId);
         assertThat(commandCaptor.getValue().doctorUserId()).isEqualTo(doctorUserId);
         assertThat(confirmation.clinicName()).isEqualTo("Demo Clinic");

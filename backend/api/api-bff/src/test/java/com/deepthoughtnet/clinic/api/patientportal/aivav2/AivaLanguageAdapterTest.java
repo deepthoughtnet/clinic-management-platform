@@ -4,10 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.AivaLanguageAdapter;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DeterministicControl;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DoctorNameNormalizer;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.LanguageAdapterRegistry;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class AivaLanguageAdapterTest {
@@ -35,6 +41,35 @@ class AivaLanguageAdapterTest {
     }
 
     @Test
+    void genericConsultationIsDistinctFromBookingAndPatientAppointmentLookup() {
+        for (String phrase : List.of("I need to consult a doctor", "I want to see a doctor",
+                "I need an appointment", "I need doctor consultation", "I want to talk to a doctor")) {
+            assertThat(normalize(phrase, "en").intent()).as(phrase)
+                    .isEqualTo(NormalizedUserTurn.Intent.CONSULTATION_REQUEST);
+        }
+        for (String phrase : List.of("मुझे डॉक्टर से मिलना है", "मुझे डॉक्टर को दिखाना है",
+                "डॉक्टर से परामर्श चाहिए", "मुझे अपॉइंटमेंट चाहिए", "doctor se consult karna hai",
+                "doctor ko dikhana hai", "mujhe doctor se milna hai", "appointment chahiye")) {
+            assertThat(normalize(phrase, "hi").intent()).as(phrase)
+                    .isEqualTo(NormalizedUserTurn.Intent.CONSULTATION_REQUEST);
+        }
+        for (String phrase : List.of("Do I have an appointment?", "meri appointment check karo",
+                "Kya meri Dr Akshu ke saath 24 September ki appointment hai?",
+                "मेरी पुरानी अपॉइंटमेंट बताओ")) {
+            String language = phrase.codePoints().anyMatch(cp -> cp >= 0x0900 && cp <= 0x097F) ? "hi" : "en";
+            assertThat(normalize(phrase, language).intent()).as(phrase)
+                    .isEqualTo(NormalizedUserTurn.Intent.LOOKUP);
+        }
+        LocalDate reference = LocalDate.of(2026, 10, 27);
+        assertThat(registry.resolve("hi", "kal doctor se consult karna hai")
+                .normalize("kal doctor se consult karna hai", reference).temporal().localDate())
+                .isEqualTo(reference.plusDays(1));
+        assertThat(registry.resolve("hi", "मुझे कल शाम डॉक्टर से मिलना है")
+                .normalize("मुझे कल शाम डॉक्टर से मिलना है", reference).temporal().localDate())
+                .isEqualTo(reference.plusDays(1));
+    }
+
+    @Test
     void englishAndHindiConfirmationControlsHaveEquivalentCanonicalText() {
         assertThat(normalize("no", "en").normalizedText()).isEqualTo(normalize("nahi", "hi").normalizedText());
         assertThat(normalize("no", "en").normalizedText()).isEqualTo(normalize("नहीं", "hi").normalizedText());
@@ -44,16 +79,19 @@ class AivaLanguageAdapterTest {
 
     @Test
     void boundedHinglishAffirmativesNormalizeToPositiveButKarDoAloneDoesNot() {
-        for (String phrase : new String[]{"haan", "haan kar do", "theek hai", "theek hai kar do",
+        for (String phrase : new String[]{"haan", "haan ji", "हाँ जी", "हां", "yes", "kar do",
+                "book kar do", "हाँ कर दो", "haan kar do", "theek hai", "theek hai kar do",
                 "thik hai", "thik hai kar do"}) {
             assertThat(normalize(phrase, "hi").confirmation()).as(phrase)
                     .isEqualTo(NormalizedUserTurn.Confirmation.POSITIVE);
         }
-        assertThat(normalize("kar do", "hi").confirmation())
-                .isEqualTo(NormalizedUserTurn.Confirmation.NONE);
-        for (String phrase : new String[]{"nahi", "nahin", "नहीं"}) {
+        for (String phrase : new String[]{"nahi", "nahin", "नहीं", "नहीं जी", "no", "mat karo"}) {
             assertThat(normalize(phrase, "hi").confirmation()).as(phrase)
                     .isEqualTo(NormalizedUserTurn.Confirmation.NEGATIVE);
+        }
+        for (String phrase : new String[]{"मुझे समझ नहीं आया", "mujhe samajh nahi aaya", "I don't understand"}) {
+            assertThat(normalize(phrase, "hi").confirmation()).as(phrase)
+                    .isEqualTo(NormalizedUserTurn.Confirmation.NONE);
         }
     }
 
@@ -103,6 +141,54 @@ class AivaLanguageAdapterTest {
         assertThat(normalize("Ravi Mehta शाम में consult करते हैं?", "hi").daypart())
                 .isEqualTo(NormalizedUserTurn.Daypart.EVENING);
         assertThat(normalize("Doctor ka evening timing kya hai?", "hi").doctorEntity()).isNull();
+        assertThat(normalize("Ravi doctor ka appointment chahiye", "hi").doctorEntity().canonicalQuery())
+                .isEqualTo("Ravi");
+        assertThat(normalize("Ravi doctor dikhao", "hi").doctorEntity().canonicalQuery())
+                .isEqualTo("Ravi");
+    }
+
+    @Test
+    void providerHonorificsAndFillerAreMatchingEvidenceNotCanonicalIdentity() {
+        String canonical = DoctorNameNormalizer.normalized("Amit Verma");
+        for (String phrase : List.of("Dr Amit Verma", "Doctor Amit Verma", "Amit doctor",
+                "Doc Amit", "Dr. Amit Verma", "Talk Amit Verma", "mujhe Amit doctor chahiye")) {
+            assertThat(DoctorNameNormalizer.matches("Amit Verma", phrase)).as(phrase).isTrue();
+        }
+        assertThat(DoctorNameNormalizer.providerEvidence("Talk Amit Verma")).isEqualTo("Amit Verma");
+        assertThat(DoctorNameNormalizer.providerEvidence("Doctor Amit Verma")).isEqualTo("Amit Verma");
+        assertThat(DoctorNameNormalizer.providerEvidence("Amit doctor")).isEqualTo("Amit");
+        assertThat(DoctorNameNormalizer.normalized("Demo Doctor")).isEqualTo("demodoctor");
+        assertThat(DoctorNameNormalizer.matches("Demo Doctor", "Dr R")).isTrue();
+    }
+
+    @Test
+    void appointmentDateAndActionLanguageCannotBeExtractedAsDoctorNames() {
+        for (String[] sample : new String[][]{
+                {"hi-IN", "कल का appointment दे दीजिए"},
+                {"hi-IN", "मेरा appointment book कर दीजिए"},
+                {"hi-IN", "कल का अपॉइंटमेंट दे दीजिए"},
+                {"hi-IN", "Dr Kaa Apaintamenta De Deejie"},
+                {"en", "Dr tomorrow appointment book please"}}) {
+            assertThat(registry.resolve(sample[0], sample[1]).normalize(sample[1]).doctorEntity())
+                    .as(sample[1]).isNull();
+        }
+        assertThat(normalize("Amit Verma", "hi-IN").doctorEntity()).isNotNull();
+        assertThat(normalize("डॉ अमित वर्मा", "hi-IN").doctorEntity()).isNotNull();
+        assertThat(normalize("doctor Ravi Mehta", "en").doctorEntity()).isNotNull();
+    }
+
+    @Test
+    void standaloneProviderSpecialtyAnswersAreNormalizedBeforeNameExtraction() {
+        for (String[] sample : new String[][]{
+                {"en", "General Medicine", "General Medicine"},
+                {"hi", "जनरल मेडिसिन", "General Medicine"},
+                {"en", "Pediatrics", "Pediatrics"},
+                {"hi", "बच्चों के डॉक्टर", "Pediatrics"}}) {
+            NormalizedUserTurn turn = registry.resolve(sample[0], sample[1]).normalize(sample[1]);
+            assertThat(turn.specialtyEntity()).as(sample[1]).isNotNull();
+            assertThat(turn.specialtyEntity().canonicalQuery()).as(sample[1]).isEqualTo(sample[2]);
+            assertThat(turn.doctorEntity()).as(sample[1]).isNull();
+        }
     }
 
     @Test
@@ -175,6 +261,47 @@ class AivaLanguageAdapterTest {
 
         assertThat(turn.doctorEntity()).isNotNull();
         assertThat(turn.doctorEntity().canonicalQuery()).isEqualTo("Dr Akshu Kumaar");
+    }
+
+    @Test
+    void knownDoctorRoleAliasesResolveToSpecialtyBeforeDoctorNameExtraction() {
+        for (String[] sample : new String[][]{
+                {"जनरल फिजिशियन का नाम बताइए", "General Medicine"},
+                {"general physician ka naam batao", "General Medicine"},
+                {"pediatric doctor ka naam batao", "Pediatrics"},
+                {"बच्चों का डॉक्टर कौन है", "Pediatrics"},
+                {"बाल रोग विशेषज्ञ", "Pediatrics"}}) {
+            var turn = registry.resolve("hi-IN", sample[0]).normalize(sample[0], LocalDate.of(2026, 10, 27));
+            assertThat(turn.specialtyEntity()).as(sample[0]).isNotNull();
+            assertThat(turn.specialtyEntity().canonicalQuery()).as(sample[0]).isEqualTo(sample[1]);
+            assertThat(turn.doctorEntity()).as(sample[0]).isNull();
+        }
+    }
+
+    @Test
+    void crossLanguageIndicSpeechIsNotPassedThroughHindiNameTransliteration() {
+        for (String text : new String[]{
+                "मला डॉक्टर अमित वर्मा सहकार्य हवे.",
+                "বাংলায় ডাক্তার সম্পর্কে বলুন"}) {
+            NormalizedUserTurn turn = registry.resolve("hi-IN", text).normalize(text, LocalDate.of(2026, 10, 23));
+            assertThat(turn.languageCode()).as(text).isEqualTo("en");
+            assertThat(turn.doctorEntity()).as(text).isNull();
+            assertThat(turn.explicitDoctorReference()).as(text).isNull();
+        }
+    }
+
+    @Test
+    void hindiLocaleStillPreservesExplicitHindiDoctorAndDateSemantics() {
+        NormalizedUserTurn turn = registry.resolve("hi-IN", "डॉक्टर अमित वर्मा कल शाम 6 बजे available हैं?")
+                .normalize("डॉक्टर अमित वर्मा कल शाम 6 बजे available हैं?", LocalDate.of(2026, 10, 23));
+        assertThat(turn.languageCode()).isEqualTo("hi");
+        assertThat(turn.doctorEntity().canonicalQuery()).contains("Amit");
+        assertThat(turn.temporal().rawSpan()).contains("कल");
+        assertThat(turn.exactTime()).isEqualTo(LocalTime.of(18, 0));
+        var canonicalTemporal = new AivaV2TemporalNormalizer(
+                Clock.fixed(Instant.parse("2026-10-23T00:00:00Z"), ZoneOffset.UTC), ZoneId.of("UTC"))
+                .normalize(turn.rawText(), AivaV2Models.ValuePatch.unchanged(), null);
+        assertThat(canonicalTemporal.localDate()).isEqualTo(LocalDate.of(2026, 10, 24));
     }
 
     @Test
@@ -318,9 +445,17 @@ class AivaLanguageAdapterTest {
             var turn = registry.resolve("", text).normalize(text, LocalDate.of(2026, 9, 1));
             assertThat(turn.exactTime()).as(text).isEqualTo(LocalTime.of(20, 30));
         }
-        for (String text : new String[]{"first", "pehla", "पहला"}) {
+        for (String text : new String[]{"first", "first one", "pehla", "पहला", "पहले"}) {
             var turn = registry.resolve("", text).normalize(text, LocalDate.of(2026, 9, 1));
             assertThat(turn.ordinal()).as(text).isEqualTo(1);
+        }
+        for (String text : new String[]{"second", "second one", "दूसरा", "दूसरे", "दूसरे वाले"}) {
+            var turn = registry.resolve("", text).normalize(text, LocalDate.of(2026, 9, 1));
+            assertThat(turn.ordinal()).as(text).isEqualTo(2);
+        }
+        for (String text : new String[]{"third", "तीसरा", "तीसरे"}) {
+            var turn = registry.resolve("", text).normalize(text, LocalDate.of(2026, 9, 1));
+            assertThat(turn.ordinal()).as(text).isEqualTo(3);
         }
     }
 
@@ -376,5 +511,23 @@ class AivaLanguageAdapterTest {
     private NormalizedUserTurn normalize(String text, String language) {
         AivaLanguageAdapter adapter = registry.resolve(language, text);
         return adapter.normalize(text);
+    }
+
+    @Test
+    void parsesHindiSpokenExactHourWithDaypart() {
+        var turn = normalize("शाम में छह बजे का स्लॉट", "hi");
+        assertThat(turn.daypart()).isEqualTo(NormalizedUserTurn.Daypart.EVENING);
+        assertThat(turn.exactTime()).isEqualTo(LocalTime.of(18, 0));
+    }
+
+    @Test
+    void HindiSpokenAndNumericNovemberDatesResolveToTheSameCanonicalDate() {
+        LocalDate reference = LocalDate.of(2026, 10, 20);
+        for (String phrase : new String[]{"5 नवंबर 2026 का slot", "पाँच नवंबर 2026 का slot"}) {
+            var turn = registry.resolve("hi-IN", phrase).normalize(phrase, reference);
+            assertThat(turn.temporal().localDate()).as(phrase).isEqualTo(LocalDate.of(2026, 11, 5));
+            assertThat(turn.temporal().status()).as(phrase)
+                    .isEqualTo(NormalizedUserTurn.TemporalStatus.RESOLVED);
+        }
     }
 }

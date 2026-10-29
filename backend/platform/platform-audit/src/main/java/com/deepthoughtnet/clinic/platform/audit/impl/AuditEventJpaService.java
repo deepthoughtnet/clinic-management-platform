@@ -46,7 +46,8 @@ public class AuditEventJpaService implements AuditEventPublisher, AuditEventQuer
                 command.actorAppUserId(),
                 command.occurredAt(),
                 command.summary(),
-                command.detailsJson()
+                command.detailsJson(),
+                command.actorContext()
         ));
 
         UUID auditEventId = saved.getId();
@@ -98,7 +99,8 @@ public class AuditEventJpaService implements AuditEventPublisher, AuditEventQuer
                 entity.getActorAppUserId(),
                 entity.getOccurredAt(),
                 entity.getSummary(),
-                entity.getDetailsJson()
+                entity.getDetailsJson(),
+                entity.getActorContext()
         );
     }
 

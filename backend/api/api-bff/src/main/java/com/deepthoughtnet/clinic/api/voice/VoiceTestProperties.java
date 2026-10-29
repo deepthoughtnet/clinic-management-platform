@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "voice")
 public class VoiceTestProperties {
     private boolean enabled = true;
-    private boolean aivaV2Enabled = true;
+    private boolean aivaV2Enabled = false;
     private String defaultLanguage = "hi-IN";
     private String responseLanguage = "hi-IN";
     private VoicePersona persona = VoicePersona.FEMALE;
@@ -220,6 +220,11 @@ public class VoiceTestProperties {
         private String ttsPath = "/text-to-speech";
         private String defaultLanguage = "hi-IN";
         private String responseLanguage = "hi-IN";
+        private String ttsModel = "bulbul:v4-flash";
+        private String ttsSpeaker = "aparna_hi_customer";
+        private String ttsLanguageCode = "hi-IN";
+        private int ttsSampleRate = 16_000;
+        private double ttsPace = 1.0;
         private int connectTimeoutMs = 10000;
         private int readTimeoutMs = 60000;
 
@@ -293,6 +298,36 @@ public class VoiceTestProperties {
 
         public void setResponseLanguage(String responseLanguage) {
             this.responseLanguage = responseLanguage;
+        }
+
+        public String getTtsModel() { return ttsModel; }
+
+        public void setTtsModel(String ttsModel) { this.ttsModel = ttsModel; }
+
+        public String getTtsSpeaker() { return ttsSpeaker; }
+
+        public void setTtsSpeaker(String ttsSpeaker) { this.ttsSpeaker = ttsSpeaker; }
+
+        public String getTtsLanguageCode() { return ttsLanguageCode; }
+
+        public void setTtsLanguageCode(String ttsLanguageCode) { this.ttsLanguageCode = ttsLanguageCode; }
+
+        public int getTtsSampleRate() { return ttsSampleRate; }
+
+        public void setTtsSampleRate(int ttsSampleRate) {
+            if (!java.util.Set.of(8_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000).contains(ttsSampleRate)) {
+                throw new IllegalArgumentException("Unsupported Sarvam REST TTS sample rate.");
+            }
+            this.ttsSampleRate = ttsSampleRate;
+        }
+
+        public double getTtsPace() { return ttsPace; }
+
+        public void setTtsPace(double ttsPace) {
+            if (ttsPace < 0.5 || ttsPace > 2.0 || !Double.isFinite(ttsPace)) {
+                throw new IllegalArgumentException("Unsupported Sarvam TTS pace.");
+            }
+            this.ttsPace = ttsPace;
         }
 
         public int getConnectTimeoutMs() {

@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ValuePatc
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionProjection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.MessageResponse;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
+import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.Clock;
 import java.time.Instant;
@@ -42,12 +43,12 @@ class AivaV2ConversationService {
     // Fixed session lifetime from creation; turns never extend a pending capability's lifetime.
     private static final long SESSION_TTL_SECONDS = 30 * 60;
     private final AivaV2ConversationDecisionGateway decisionGateway;
-    private final AivaV2TransactionalKernel kernel;
     private final AivaV2SessionStore sessionStore;
     private final PatientPortalService patientPortalService;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final Clock clock;
     private final AivaResponseRenderer responseRenderer;
+    private final AivaV2TransactionalExecutionBoundary executionBoundary;
     private final ScheduledExecutorService progressScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "aiva-v2-progress");
         thread.setDaemon(true);
@@ -63,9 +64,11 @@ class AivaV2ConversationService {
             AivaV2SessionStore sessionStore,
             PatientPortalService patientPortalService,
             ClinicTimeZoneResolver clinicTimeZoneResolver,
-            AivaResponseRenderer responseRenderer
+            AivaResponseRenderer responseRenderer,
+            AivaV2TransactionalExecutionBoundary executionBoundary
     ) {
-        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver, Clock.systemUTC(), responseRenderer);
+        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver,
+                Clock.systemUTC(), responseRenderer, executionBoundary);
     }
 
     AivaV2ConversationService(
@@ -75,7 +78,8 @@ class AivaV2ConversationService {
             PatientPortalService patientPortalService,
             Clock clock
     ) {
-        this(decisionGateway, kernel, sessionStore, patientPortalService, null, clock, new AivaResponseRenderer());
+        this(decisionGateway, kernel, sessionStore, patientPortalService, null, clock,
+                new AivaResponseRenderer(), new AivaV2TransactionalExecutionBoundary(kernel, new AivaTransactionCapabilityGate()));
     }
 
     AivaV2ConversationService(
@@ -86,7 +90,8 @@ class AivaV2ConversationService {
             ClinicTimeZoneResolver clinicTimeZoneResolver,
             Clock clock
     ) {
-        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver, clock, new AivaResponseRenderer());
+        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver, clock,
+                new AivaResponseRenderer(), new AivaV2TransactionalExecutionBoundary(kernel, new AivaTransactionCapabilityGate()));
     }
 
     AivaV2ConversationService(
@@ -98,13 +103,27 @@ class AivaV2ConversationService {
             Clock clock,
             AivaResponseRenderer responseRenderer
     ) {
+        this(decisionGateway, kernel, sessionStore, patientPortalService, clinicTimeZoneResolver, clock,
+                responseRenderer, new AivaV2TransactionalExecutionBoundary(kernel, new AivaTransactionCapabilityGate()));
+    }
+
+    AivaV2ConversationService(
+            AivaV2ConversationDecisionGateway decisionGateway,
+            AivaV2TransactionalKernel kernel,
+            AivaV2SessionStore sessionStore,
+            PatientPortalService patientPortalService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            Clock clock,
+            AivaResponseRenderer responseRenderer,
+            AivaV2TransactionalExecutionBoundary executionBoundary
+    ) {
         this.decisionGateway = decisionGateway;
-        this.kernel = kernel;
         this.sessionStore = sessionStore;
         this.patientPortalService = patientPortalService;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.clock = clock;
         this.responseRenderer = responseRenderer;
+        this.executionBoundary = executionBoundary;
     }
 
     @PostConstruct
@@ -122,12 +141,18 @@ class AivaV2ConversationService {
             throw new IllegalArgumentException("Message is required.");
         }
         UUID patientId = patientPortalService.currentPatientId();
-        String tenantId = RequestContextHolder.requireTenantId().toString();
+        RequestContext requestContext = RequestContextHolder.require();
+        UUID tenantUuid = requestContext.tenantId().value();
+        String tenantId = tenantUuid.toString();
         String conversationId = StringUtils.hasText(request.conversationId())
                 ? request.conversationId().trim() : "aiva-v2-" + UUID.randomUUID();
         if (conversationId.length() > 100 || !conversationId.matches("[A-Za-z0-9_-]+")) {
             throw new IllegalArgumentException("Invalid conversation identifier.");
         }
+        ZoneId clinicZone = clinicTimeZoneResolver == null
+                ? ZoneId.of("Asia/Kolkata") : clinicTimeZoneResolver.resolve(tenantUuid);
+        AivaExecutionContext executionContext = authenticatedWebContext(
+                requestContext, patientId, safeLanguage(request.language()), clinicZone, conversationId);
         String key = tenantId + "|" + patientId + "|" + conversationId;
         String turnId = "turn-" + UUID.randomUUID();
         String clientTurnId = StringUtils.hasText(request.clientTurnId()) ? request.clientTurnId().trim() : null;
@@ -140,9 +165,6 @@ class AivaV2ConversationService {
             SessionProjection session = current == null ? new SessionProjection(
                     conversationId, patientId, tenantId, null, null, null, null, null,
                     1L, Instant.now(clock).plusSeconds(SESSION_TTL_SECONDS)) : current;
-            ZoneId clinicZone = clinicTimeZoneResolver == null
-                    ? ZoneId.of("Asia/Kolkata")
-                    : clinicTimeZoneResolver.resolve(RequestContextHolder.requireTenantId());
             NormalizedUserTurn normalizedTurn = decisionGateway.normalizeTurn(request.message(), safeLanguage(request.language()),
                     java.time.LocalDate.now(clock.withZone(clinicZone)));
             var presentation = sessionStore.updatePresentation(key, normalizedTurn, session.expiresAt());
@@ -163,7 +185,7 @@ class AivaV2ConversationService {
                                 presentation.responseLanguage(), presentation.responseStyle()));
                     }, Math.max(0L, progressDelayMs), TimeUnit.MILLISECONDS);
             var decision = request.action() == null
-                    ? decisionGateway.decide(normalizedTurn, session)
+                    ? decisionGateway.decide(normalizedTurn, session, executionContext)
                     : decisionForAction(request.action(), safeLanguage(request.language()));
             logDecision(conversationId, turnId, decision);
             AivaV2Models.ValuePatch datePatch = decision.operation() == AivaV2Models.Operation.LOOKUP_APPOINTMENTS
@@ -188,8 +210,19 @@ class AivaV2ConversationService {
                     }, Math.max(0L, progressDelayMs), TimeUnit.MILLISECONDS);
             long operationStarted = System.nanoTime();
             try {
-                AivaV2TransactionalKernel.KernelResult result = kernel.handle(session, decision, temporal, clinicZone, turnId,
+                AivaV2TransactionalExecutionBoundary.Result execution = executionBoundary.execute(
+                        executionContext, session, decision, temporal, clinicZone, turnId,
                         ambiguousTime(normalizedTurn, decision));
+                if (!execution.authorization().allowed()) {
+                    log.warn("AIVA_V2_TRANSACTION_AUTHORIZATION decision=DENIED operation={} reason={}",
+                            decision.operation(), execution.authorization().denialReason());
+                    MessageResponse denied = new MessageResponse(conversationId, turnId,
+                            "This action is not authorized for the current conversation.", "TRANSACTION_DENIED",
+                            null, "SERVER", false, java.util.List.of());
+                    return new AivaV2SessionStore.TurnExecution(session,
+                            responseRenderer.render(denied, presentation.responseLanguage(), presentation.responseStyle()));
+                }
+                AivaV2TransactionalKernel.KernelResult result = execution.kernelResult();
                 MessageResponse rendered = responseRenderer.render(result.response(), presentation.responseLanguage(), presentation.responseStyle());
                 return new AivaV2SessionStore.TurnExecution(result.session(), rendered);
             } finally {
@@ -225,6 +258,15 @@ class AivaV2ConversationService {
         };
         return new MessageResponse(conversationId, turnId, message, category, null,
                 "SERVER", false, java.util.List.of());
+    }
+
+    static AivaExecutionContext authenticatedWebContext(RequestContext requestContext, UUID patientId,
+                                                        String language, ZoneId timezone, String conversationId) {
+        UUID tenantId = requestContext.tenantId().value();
+        return new AivaExecutionContext(tenantId, patientId, "PATIENT_PORTAL", language, timezone,
+                conversationId, null, null, null, java.util.Set.of(), null, requestContext.correlationId(),
+                AivaTransactionAuthorization.patientPortal(tenantId, patientId,
+                        requestContext.appUserId() == null ? null : requestContext.appUserId().toString(), conversationId));
     }
 
     private ConversationDecision decisionForAction(InteractiveActionRequest action, String language) {

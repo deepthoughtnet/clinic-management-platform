@@ -28,6 +28,18 @@ public class PatientPortalOtpChallengeEntity {
     @Column(name = "phone_normalized", nullable = false, length = 32)
     private String phoneNormalized;
 
+    @Column(name = "identified_patient_id")
+    private UUID identifiedPatientId;
+
+    @Column(name = "provider_call_id", length = 200)
+    private String providerCallId;
+
+    @Column(name = "interaction_id")
+    private UUID interactionId;
+
+    @Column(name = "channel", length = 24)
+    private String channel;
+
     @Column(name = "otp_hash", nullable = false, length = 255)
     private String otpHash;
 
@@ -67,6 +79,16 @@ public class PatientPortalOtpChallengeEntity {
         return entity;
     }
 
+    public static PatientPortalOtpChallengeEntity createVoice(UUID tenantId, UUID patientId, String phoneNormalized,
+            String otpHash, OffsetDateTime expiresAt, String providerCallId, UUID interactionId) {
+        PatientPortalOtpChallengeEntity entity = create(tenantId, phoneNormalized, otpHash, expiresAt);
+        entity.identifiedPatientId = patientId;
+        entity.providerCallId = providerCallId;
+        entity.interactionId = interactionId;
+        entity.channel = "VOICE";
+        return entity;
+    }
+
     public UUID getId() {
         return id;
     }
@@ -78,6 +100,11 @@ public class PatientPortalOtpChallengeEntity {
     public String getPhoneNormalized() {
         return phoneNormalized;
     }
+
+    public UUID getIdentifiedPatientId() { return identifiedPatientId; }
+    public String getProviderCallId() { return providerCallId; }
+    public UUID getInteractionId() { return interactionId; }
+    public String getChannel() { return channel; }
 
     public String getOtpHash() {
         return otpHash;

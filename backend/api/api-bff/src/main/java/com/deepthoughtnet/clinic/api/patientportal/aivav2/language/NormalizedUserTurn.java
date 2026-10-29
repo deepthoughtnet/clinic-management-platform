@@ -29,7 +29,7 @@ public record NormalizedUserTurn(
     public enum Daypart { MORNING, AFTERNOON, EVENING }
     public enum Confirmation { POSITIVE, NEGATIVE, NONE }
     public enum Pagination { SHOW_MORE, NONE }
-    public enum Intent { BOOKING, LOOKUP, CANCELLATION, RESCHEDULE, UNKNOWN }
+    public enum Intent { BOOKING, CONSULTATION_REQUEST, LOOKUP, CANCELLATION, RESCHEDULE, UNKNOWN }
     public enum TemporalStatus { RESOLVED, AMBIGUOUS, INVALID, NONE }
     public enum RelativeKind { TODAY, TOMORROW, DAY_AFTER_TOMORROW, THIS_WEEKDAY, NEXT_WEEKDAY, NONE }
 
@@ -117,6 +117,57 @@ public record NormalizedUserTurn(
                 exactTime, daypart, replacement, confirmation, pagination, intent);
     }
 
+    public NormalizedUserTurn withDaypart(Daypart replacement) {
+        return new NormalizedUserTurn(rawText, normalizedText, selectionText, languageCode,
+                explicitDoctorReference, explicitLookupQualifierPresent, controls, responseLanguage,
+                responseStyle, canonicalSemanticText, doctorEntity, specialtyEntity, temporal,
+                exactTime, replacement, ordinal, confirmation, pagination, intent);
+    }
+
+    public NormalizedUserTurn withConfirmation(Confirmation replacement) {
+        return new NormalizedUserTurn(rawText, normalizedText, selectionText, languageCode,
+                explicitDoctorReference, explicitLookupQualifierPresent, controls, responseLanguage,
+                responseStyle, canonicalSemanticText, doctorEntity, specialtyEntity, temporal,
+                exactTime, daypart, ordinal, replacement, pagination, intent);
+    }
+
+    public NormalizedUserTurn withPagination(Pagination replacement) {
+        return new NormalizedUserTurn(rawText, normalizedText, selectionText, languageCode,
+                explicitDoctorReference, explicitLookupQualifierPresent, controls, responseLanguage,
+                responseStyle, canonicalSemanticText, doctorEntity, specialtyEntity, temporal,
+                exactTime, daypart, ordinal, confirmation, replacement, intent);
+    }
+
+    public NormalizedUserTurn withoutDoctorEvidence() {
+        return new NormalizedUserTurn(rawText, normalizedText, selectionText, languageCode,
+                null, false, controls, responseLanguage, responseStyle, canonicalSemanticText,
+                null, specialtyEntity, temporal, exactTime, daypart, ordinal, confirmation, pagination, intent);
+    }
+
+    public NormalizedUserTurn withDoctorEvidence(String providerName) {
+        return new NormalizedUserTurn(rawText, normalizedText, selectionText, languageCode,
+                providerName, false, controls, responseLanguage, responseStyle, canonicalSemanticText,
+                entity(providerName, providerName), specialtyEntity, temporal, exactTime, daypart,
+                ordinal, confirmation, pagination, intent);
+    }
+
+    public NormalizedUserTurn withSpecialtyEvidence(EntityReference replacement) {
+        return new NormalizedUserTurn(rawText, normalizedText, selectionText, languageCode,
+                explicitDoctorReference, explicitLookupQualifierPresent, controls, responseLanguage,
+                responseStyle, canonicalSemanticText, doctorEntity, replacement, temporal, exactTime,
+                daypart, ordinal, confirmation, pagination, intent);
+    }
+
+    public NormalizedUserTurn withIntent(Intent replacement) {
+        String replacementSemantic = replacement == Intent.BOOKING ? "book appointment"
+                : replacement == Intent.CONSULTATION_REQUEST ? "consult doctor"
+                : canonicalSemanticText;
+        return new NormalizedUserTurn(rawText, normalizedText, selectionText, languageCode,
+                explicitDoctorReference, explicitLookupQualifierPresent, controls, responseLanguage,
+                responseStyle, replacementSemantic, doctorEntity, specialtyEntity, temporal, exactTime,
+                daypart, ordinal, confirmation, pagination, replacement);
+    }
+
     public static EntityReference entity(String rawSpan, String canonicalQuery) {
         return rawSpan == null && canonicalQuery == null ? null : new EntityReference(rawSpan, canonicalQuery);
     }
@@ -131,11 +182,14 @@ public record NormalizedUserTurn(
 
     private static Integer extractOrdinal(String text) {
         if (text == null) return null;
-        var match = java.util.regex.Pattern.compile("^(?:the\\s+)?(first|second|third|fourth|[1-9](?:st|nd|rd|th)?)(?:\\s+(?:one|slot))?$",
+        var match = java.util.regex.Pattern.compile("^(?:(?:the|number)\\s+)?(first|second|third|fourth|पहला|पहली|पहले|दूसरा|दूसरी|दूसरे|तीसरा|तीसरी|तीसरे|[1-9](?:st|nd|rd|th)?)(?:\\s+(?:one|slot|वाले|वाली))?$",
                 java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text.trim());
         if (!match.matches()) return null;
         return switch (match.group(1).toLowerCase(java.util.Locale.ROOT)) {
-            case "first" -> 1; case "second" -> 2; case "third" -> 3; case "fourth" -> 4;
+            case "first", "पहला", "पहली", "पहले" -> 1;
+            case "second", "दूसरा", "दूसरी", "दूसरे" -> 2;
+            case "third", "तीसरा", "तीसरी", "तीसरे" -> 3;
+            case "fourth" -> 4;
             default -> Integer.valueOf(match.group(1).replaceAll("[^0-9]", ""));
         };
     }
@@ -146,13 +200,13 @@ public record NormalizedUserTurn(
         String text = rawText.toLowerCase(java.util.Locale.ROOT);
         if (!text.matches(".*(?:\\bappointments?\\b|अपॉइंटमेंट्स?|अपॉइंटमेन्ट्स?).*")) return null;
         var match = java.util.regex.Pattern.compile(
-                "(?i)(?:^|[^\\p{L}\\p{N}])(first|second|third|fourth|pehli|pahli|dusri|doosri|teesri|पहली|दूसरी|तीसरी|सेकंड|[1-9](?:st|nd|rd|th)?)(?=[^\\p{L}\\p{N}]|$)",
+                "(?i)(?:^|[^\\p{L}\\p{N}])(first|second|third|fourth|pehli|pahli|dusri|doosri|teesri|पहला|पहली|पहले|दूसरा|दूसरी|दूसरे|तीसरा|तीसरी|तीसरे|सेकंड|[1-9](?:st|nd|rd|th)?)(?=[^\\p{L}\\p{N}]|$)",
                 java.util.regex.Pattern.UNICODE_CASE).matcher(text);
         if (!match.find()) return null;
         return switch (match.group(1).toLowerCase(java.util.Locale.ROOT)) {
-            case "first", "pehli", "pahli", "पहली" -> 1;
-            case "second", "dusri", "doosri", "दूसरी", "सेकंड" -> 2;
-            case "third", "teesri", "तीसरी" -> 3;
+            case "first", "pehli", "pahli", "पहला", "पहली", "पहले" -> 1;
+            case "second", "dusri", "doosri", "दूसरा", "दूसरी", "दूसरे", "सेकंड" -> 2;
+            case "third", "teesri", "तीसरा", "तीसरी", "तीसरे" -> 3;
             case "fourth" -> 4;
             default -> Integer.valueOf(match.group(1).replaceAll("[^0-9]", ""));
         };

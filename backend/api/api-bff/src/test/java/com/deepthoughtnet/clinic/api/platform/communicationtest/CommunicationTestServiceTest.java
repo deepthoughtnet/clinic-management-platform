@@ -19,7 +19,11 @@ import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
 import com.deepthoughtnet.clinic.voice.spi.VoiceCallProvider;
 import java.util.List;
 import java.util.UUID;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import static com.deepthoughtnet.clinic.api.platform.communicationtest.CommunicationTestDtos.TestRequest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -515,8 +519,69 @@ class CommunicationTestServiceTest {
     }
 
     @Test
+    void sarvamLinear16IsConvertedToDotVoiceMuLawBeforePlayback() {
+        var properties = new com.deepthoughtnet.clinic.api.voice.VoiceTestProperties();
+        properties.getSarvam().setTtsSampleRate(16_000);
+        var sarvam = mock(com.deepthoughtnet.clinic.api.voice.spi.TextToSpeechProvider.class);
+        when(sarvam.providerName()).thenReturn("sarvam");
+        when(sarvam.isReady()).thenReturn(true);
+        when(sarvam.synthesize(org.mockito.ArgumentMatchers.any())).thenReturn(
+                new com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult(new byte[32_000],
+                        "audio/L16", "sarvam", null));
+        ReminderVoiceRenderer renderer = new ReminderVoiceRenderer(List.of(sarvam), properties);
+        DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
+        when(stream.startPlayback(org.mockito.ArgumentMatchers.eq("sarvam-linear16-call"),
+                org.mockito.ArgumentMatchers.anyList())).thenReturn(true);
+        var resolver = mock(CommunicationChannelResolver.class);
+        UUID tenant = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("did-1")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), tenant, null, null, "DOTVOICE", "+10000000001", null, null)));
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, renderer, stream, null, null, null, resolver);
+        isolated.registerInboundCall("sarvam-linear16-call", "+10000000000", "did-1");
+        isolated.startInboundGreeting("sarvam-linear16-call");
+
+        var frames = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(stream).startPlayback(org.mockito.ArgumentMatchers.eq("sarvam-linear16-call"), frames.capture());
+        @SuppressWarnings("unchecked")
+        List<byte[]> playbackFrames = frames.getValue();
+        assertEquals(50, playbackFrames.size());
+        assertTrue(playbackFrames.stream().allMatch(frame -> frame.length == 160));
+    }
+
+    @Test
+    void failedInboundTtsPreparationNotifiesDotVoiceToResumeListening() {
+        ReminderVoiceRenderer renderer = mock(ReminderVoiceRenderer.class);
+        when(renderer.render(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(new ReminderVoiceRenderer.RenderedReminder(null, "TTS_PROVIDER_UNAVAILABLE", null));
+        DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
+        var resolver = mock(CommunicationChannelResolver.class);
+        UUID tenant = UUID.randomUUID();
+        when(resolver.resolveInboundVoiceByDidWithFallback("did-2")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), tenant, null, null, "DOTVOICE", "+10000000003", null, null)));
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, renderer, stream, null, null, null, resolver);
+        String callId = "inbound-tts-preparation-failed";
+        isolated.registerInboundCall(callId, "+10000000002", "did-2");
+
+        isolated.startInboundGreeting(callId);
+
+        verify(stream).onPlaybackPreparationFailed(callId);
+        verify(stream, never()).startPlayback(org.mockito.ArgumentMatchers.eq(callId),
+                org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
     void inboundMutationTurnUsesAivaContinuationAndDoesNotTakeLegacyClosingPath() {
         ReminderVoiceRenderer renderer = testRenderer();
+        when(renderer.render(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(new ReminderVoiceRenderer.RenderedReminder(
+                        new SpeechSynthesisResult(testWav(320, 16_000), "audio/wav", 1), null, "piper", 16_000));
         DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
         when(stream.startPlayback(org.mockito.ArgumentMatchers.eq("aiva-mutation-call"), org.mockito.ArgumentMatchers.anyList()))
                 .thenReturn(true);
@@ -527,6 +592,8 @@ class CommunicationTestServiceTest {
                 .thenReturn(new com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult(
                         "मुझे अपॉइंटमेंट बुक करनी है।", "sarvam", null));
         var aiva = mock(VoiceReadOnlyAivaService.class);
+        when(aiva.presentationModeName(org.mockito.ArgumentMatchers.any())).thenReturn("HINDI");
+        when(aiva.presentationLanguage(org.mockito.ArgumentMatchers.any())).thenReturn("hi-IN");
         when(aiva.continueTurn(org.mockito.ArgumentMatchers.any(VoiceReadOnlyAivaService.Context.class),
                 org.mockito.ArgumentMatchers.eq("मुझे अपॉइंटमेंट बुक करनी है।")))
                 .thenReturn(new VoiceReadOnlyAivaService.TurnResult(
@@ -543,8 +610,13 @@ class CommunicationTestServiceTest {
 
         isolated.registerInboundCall("aiva-mutation-call", "+919999000002", "00919999000001");
         isolated.markInboundAnswered("aiva-mutation-call");
+        Logger logger = (Logger) LoggerFactory.getLogger(CommunicationTestService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
         isolated.processInboundFirstUtterance("aiva-mutation-call", testWav());
         isolated.processInboundFirstUtterance("aiva-mutation-call", testWav(160));
+        logger.detachAppender(appender);
 
         var result = isolated.inboundVoiceResult("aiva-mutation-call");
         assertEquals("BOOK_APPOINTMENT", result.lastDetectedIntent());
@@ -557,14 +629,64 @@ class CommunicationTestServiceTest {
         assertEquals("sarvam", diagnostic.sttProvider());
         assertEquals("BOOK_APPOINTMENT", diagnostic.detectedIntent());
         assertEquals("BOOK_APPOINTMENT", diagnostic.selectedTool());
-        assertEquals("BLOCKED_READ_ONLY", diagnostic.policyDecision());
+        assertEquals("DENIED", diagnostic.policyDecision());
         assertEquals("BLOCKED", diagnostic.toolExecutionStatus());
         assertEquals(result.lastAivaResponse(), diagnostic.aivaResponseText());
         assertEquals(result.lastAivaResponse(), diagnostic.ttsText());
         assertEquals("piper", diagnostic.ttsProvider());
+        verify(renderer, org.mockito.Mockito.atLeastOnce()).render(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("HINDI"), org.mockito.ArgumentMatchers.eq("hi-IN"));
+        org.assertj.core.api.Assertions.assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                .anySatisfy(message -> org.assertj.core.api.Assertions.assertThat(message)
+                        .contains("VOICE_PLAYBACK_FORMAT", "sourceSampleRate=16000", "playbackSampleRate=8000",
+                                "resampled=true", "encoding=G711_MULAW", "channels=1"));
         verify(aiva, org.mockito.Mockito.times(2)).continueTurn(org.mockito.ArgumentMatchers.any(VoiceReadOnlyAivaService.Context.class),
                 org.mockito.ArgumentMatchers.eq("मुझे अपॉइंटमेंट बुक करनी है।"));
         verify(stream, never()).hangup("aiva-mutation-call");
+    }
+
+    @Test
+    void inboundOtpTurnPersistsOnlyRedactedTranscriptAndSafeDiagnostics() {
+        String sensitiveOtpSpeech = "one two three four five six";
+        ReminderVoiceRenderer renderer = testRenderer();
+        DotVoiceMediaStreamClient stream = mock(DotVoiceMediaStreamClient.class);
+        when(stream.startPlayback(org.mockito.ArgumentMatchers.eq("otp-redaction-call"), org.mockito.ArgumentMatchers.anyList()))
+                .thenReturn(true);
+        var orchestrator = mock(com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService.class);
+        when(orchestrator.transcribeBufferedAudio(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(byte[].class),
+                org.mockito.ArgumentMatchers.eq("audio/wav"), org.mockito.ArgumentMatchers.eq("dotvoice-inbound.wav"),
+                org.mockito.ArgumentMatchers.eq("hi-IN")))
+                .thenReturn(new com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult(
+                        sensitiveOtpSpeech, "sarvam", null));
+        var aiva = mock(VoiceReadOnlyAivaService.class);
+        when(aiva.isAwaitingOtp(org.mockito.ArgumentMatchers.any(VoiceReadOnlyAivaService.Context.class))).thenReturn(true);
+        when(aiva.continueTurn(org.mockito.ArgumentMatchers.any(VoiceReadOnlyAivaService.Context.class),
+                org.mockito.ArgumentMatchers.eq(sensitiveOtpSpeech)))
+                .thenReturn(new VoiceReadOnlyAivaService.TurnResult("सत्यापन पूरा हुआ।", "AUTHENTICATION_VERIFIED",
+                        null, true, false, false, null, 0, "SUCCESS", false,
+                        java.util.Map.of("voiceAuthentication", java.util.Map.of("authInputRedacted", true,
+                                "verificationResult", "SUCCESS"))));
+        CommunicationChannelResolver resolver = mock(CommunicationChannelResolver.class);
+        when(resolver.resolveInboundVoiceByDidWithFallback("00919999000001")).thenReturn(java.util.Optional.of(
+                new com.deepthoughtnet.clinic.communication.service.CommunicationChannelModels.Resolution(
+                        UUID.randomUUID(), UUID.randomUUID(), null, null, "DOTVOICE", "+919999000001", null, null)));
+        CommunicationTestService isolated = new CommunicationTestService(
+                mock(CarePilotMessagingStatusService.class), mock(MessageOrchestratorService.class), List.of(), List.of(),
+                null, renderer, stream, orchestrator, new VoiceConversationContextRegistry(), new VoiceResponseInterpreter(), resolver);
+        isolated.setVoiceReadOnlyAivaService(aiva);
+        isolated.registerInboundCall("otp-redaction-call", "+919999000002", "00919999000001");
+        isolated.markInboundAnswered("otp-redaction-call");
+
+        isolated.processInboundFirstUtterance("otp-redaction-call", testWav());
+
+        var result = isolated.inboundVoiceResult("otp-redaction-call");
+        assertEquals("[REDACTED_AUTH_INPUT]", result.firstTranscript());
+        assertEquals("[REDACTED_AUTH_INPUT]", result.conversationTurns().get(0).callerTranscript());
+        assertTrue(result.conversationTurns().get(0).runtimeDiagnostics().toString().contains("authInputRedacted=true"));
+        assertFalse(result.toString().contains(sensitiveOtpSpeech));
+        assertFalse(result.conversationTurns().get(0).runtimeDiagnostics().toString().contains("123456"));
+        verify(aiva).continueTurn(org.mockito.ArgumentMatchers.any(VoiceReadOnlyAivaService.Context.class),
+                org.mockito.ArgumentMatchers.eq(sensitiveOtpSpeech));
     }
 
     @Test
@@ -789,11 +911,15 @@ class CommunicationTestServiceTest {
     }
 
     private byte[] testWav(int pcmBytes) {
+        return testWav(pcmBytes, 8_000);
+    }
+
+    private byte[] testWav(int pcmBytes, int sampleRate) {
         byte[] wav = new byte[44 + pcmBytes];
         java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(wav).order(java.nio.ByteOrder.LITTLE_ENDIAN);
         b.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(wav.length - 8)
                 .put("WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(16).putShort((short) 1)
-                .putShort((short) 1).putInt(8000).putInt(16000).putShort((short) 2).putShort((short) 16)
+                .putShort((short) 1).putInt(sampleRate).putInt(sampleRate * 2).putShort((short) 2).putShort((short) 16)
                 .put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(pcmBytes);
         return wav;
     }

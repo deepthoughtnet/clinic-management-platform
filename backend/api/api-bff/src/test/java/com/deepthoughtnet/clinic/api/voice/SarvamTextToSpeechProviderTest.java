@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.voice;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -46,19 +47,20 @@ class SarvamTextToSpeechProviderTest {
         properties.getSarvam().setApiKey("super-secret-key");
         properties.getSarvam().setBaseUrl("http://sarvam.test");
         properties.getSarvam().setTtsPath("/text-to-speech");
+        properties.getSarvam().setTtsSampleRate(16_000);
         SarvamTextToSpeechProvider provider = new SarvamTextToSpeechProvider(properties, new RestTemplateBuilder(), new ObjectMapper());
         RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(content().json("{\"text\":\"Namaste\",\"language\":\"hi-IN\"}"))
-                .andRespond(withSuccess("wav-audio".getBytes(StandardCharsets.UTF_8), MediaType.parseMediaType("audio/wav")));
+                .andExpect(content().json("{\"text\":\"Namaste\",\"language_code\":\"hi-IN\",\"model\":\"bulbul:v4-flash\",\"speaker\":\"aparna_hi_customer\",\"pace\":1.0,\"speech_sample_rate\":16000,\"output_audio_codec\":\"linear16\"}"))
+                .andRespond(withSuccess("{\"request_id\":\"test\",\"audios\":[\"" + linear16Base64() + "\"]}", MediaType.APPLICATION_JSON));
 
         var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "auto"));
 
         assertThat(result.providerName()).isEqualTo("sarvam");
-        assertThat(result.contentType()).isEqualTo("audio/wav");
-        assertThat(result.audioBytes()).isEqualTo("wav-audio".getBytes(StandardCharsets.UTF_8));
+        assertThat(result.contentType()).isEqualTo("audio/L16");
+        assertThat(result.audioBytes()).isEqualTo(linear16Bytes());
         server.verify();
     }
 
@@ -76,8 +78,8 @@ class SarvamTextToSpeechProviderTest {
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(content().json("{\"text\":\"Namaste\",\"language\":\"hi-IN\",\"speaker\":\"shubh\"}"))
-                .andRespond(withSuccess("wav-audio".getBytes(StandardCharsets.UTF_8), MediaType.parseMediaType("audio/wav")));
+                .andExpect(content().json("{\"text\":\"Namaste\",\"language_code\":\"hi-IN\",\"model\":\"bulbul:v4-flash\",\"speaker\":\"shubh\",\"pace\":1.0,\"speech_sample_rate\":16000,\"output_audio_codec\":\"linear16\"}"))
+                .andRespond(withSuccess("{\"request_id\":\"test\",\"audios\":[\"" + linear16Base64() + "\"]}", MediaType.APPLICATION_JSON));
 
         var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "auto"));
 
@@ -86,7 +88,7 @@ class SarvamTextToSpeechProviderTest {
     }
 
     @Test
-    void synthesizeFallsBackToAivaDefaultVoiceWhenSarvamSpeakerIsMissing() {
+    void typedSarvamSpeakerDefaultTakesPrecedenceOverLegacyAivaVoice() {
         VoiceTestProperties properties = new VoiceTestProperties();
         properties.getSarvam().setEnabled(true);
         properties.getSarvam().setTtsEnabled(true);
@@ -99,8 +101,8 @@ class SarvamTextToSpeechProviderTest {
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(content().json("{\"text\":\"Namaste\",\"language\":\"hi-IN\",\"speaker\":\"shubh\"}"))
-                .andRespond(withSuccess("wav-audio".getBytes(StandardCharsets.UTF_8), MediaType.parseMediaType("audio/wav")));
+                .andExpect(content().json("{\"text\":\"Namaste\",\"language_code\":\"hi-IN\",\"model\":\"bulbul:v4-flash\",\"speaker\":\"aparna_hi_customer\",\"pace\":1.0,\"speech_sample_rate\":16000,\"output_audio_codec\":\"linear16\"}"))
+                .andRespond(withSuccess("{\"request_id\":\"test\",\"audios\":[\"" + linear16Base64() + "\"]}", MediaType.APPLICATION_JSON));
 
         var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "auto"));
 
@@ -122,14 +124,14 @@ class SarvamTextToSpeechProviderTest {
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(content().json("{\"text\":\"Namaste\",\"language\":\"hi-IN\"}"))
-                .andRespond(withSuccess("{\"audioBase64\":\"" + Base64.getEncoder().encodeToString("json-audio".getBytes(StandardCharsets.UTF_8)) + "\"}", MediaType.APPLICATION_JSON));
+                .andExpect(content().json("{\"text\":\"Namaste\",\"language_code\":\"en-IN\",\"model\":\"bulbul:v4-flash\",\"speaker\":\"aparna_hi_customer\",\"pace\":1.0,\"speech_sample_rate\":16000,\"output_audio_codec\":\"linear16\"}"))
+                .andRespond(withSuccess("{\"audioBase64\":\"" + linear16Base64() + "\"}", MediaType.APPLICATION_JSON));
 
         var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "en"));
 
         assertThat(result.providerName()).isEqualTo("sarvam");
-        assertThat(result.contentType()).isEqualTo("audio/mpeg");
-        assertThat(result.audioBytes()).isEqualTo("json-audio".getBytes(StandardCharsets.UTF_8));
+        assertThat(result.contentType()).isEqualTo("audio/L16");
+        assertThat(result.audioBytes()).isEqualTo(linear16Bytes());
         server.verify();
     }
 
@@ -146,14 +148,14 @@ class SarvamTextToSpeechProviderTest {
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(content().json("{\"text\":\"Namaste\",\"language\":\"hi-IN\"}"))
-                .andRespond(withSuccess("{\"data\":{\"audioContent\":\"" + Base64.getEncoder().encodeToString("nested-audio".getBytes(StandardCharsets.UTF_8)) + "\"}}", MediaType.APPLICATION_JSON));
+                .andExpect(content().json("{\"text\":\"Namaste\",\"language_code\":\"hi-IN\",\"model\":\"bulbul:v4-flash\",\"speaker\":\"aparna_hi_customer\",\"pace\":1.0,\"speech_sample_rate\":16000,\"output_audio_codec\":\"linear16\"}"))
+                .andRespond(withSuccess("{\"data\":{\"audioContent\":\"" + linear16Base64() + "\"}}", MediaType.APPLICATION_JSON));
 
         var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "hi-IN"));
 
         assertThat(result.providerName()).isEqualTo("sarvam");
-        assertThat(result.contentType()).isEqualTo("audio/mpeg");
-        assertThat(result.audioBytes()).isEqualTo("nested-audio".getBytes(StandardCharsets.UTF_8));
+        assertThat(result.contentType()).isEqualTo("audio/L16");
+        assertThat(result.audioBytes()).isEqualTo(linear16Bytes());
         server.verify();
     }
 
@@ -170,14 +172,14 @@ class SarvamTextToSpeechProviderTest {
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(content().json("{\"text\":\"Namaste\",\"language\":\"hi-IN\"}"))
-                .andRespond(withSuccess("[{\"audio\":\"" + Base64.getEncoder().encodeToString("array-audio".getBytes(StandardCharsets.UTF_8)) + "\"}]", MediaType.APPLICATION_JSON));
+                .andExpect(content().json("{\"text\":\"Namaste\",\"language_code\":\"en-IN\",\"model\":\"bulbul:v4-flash\",\"speaker\":\"aparna_hi_customer\",\"pace\":1.0,\"speech_sample_rate\":16000,\"output_audio_codec\":\"linear16\"}"))
+                .andRespond(withSuccess("{\"request_id\":\"test\",\"audios\":[\"" + linear16Base64() + "\"]}", MediaType.APPLICATION_JSON));
 
         var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "en"));
 
         assertThat(result.providerName()).isEqualTo("sarvam");
-        assertThat(result.contentType()).isEqualTo("audio/mpeg");
-        assertThat(result.audioBytes()).isEqualTo("array-audio".getBytes(StandardCharsets.UTF_8));
+        assertThat(result.contentType()).isEqualTo("audio/L16");
+        assertThat(result.audioBytes()).isEqualTo(linear16Bytes());
         server.verify();
     }
 
@@ -193,7 +195,7 @@ class SarvamTextToSpeechProviderTest {
         RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
-                .andRespond(withSuccess("wav-audio".getBytes(StandardCharsets.UTF_8), MediaType.parseMediaType("audio/wav")));
+                .andRespond(withSuccess("{\"request_id\":\"test\",\"audios\":[\"" + linear16Base64() + "\"]}", MediaType.APPLICATION_JSON));
 
         Logger logger = (Logger) LoggerFactory.getLogger(SarvamTextToSpeechProvider.class);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -210,4 +212,31 @@ class SarvamTextToSpeechProviderTest {
                 .noneMatch(message -> message.contains("super-secret-key"));
         server.verify();
     }
+
+    @Test
+    void rejectsUnexpectedSarvamCodecAndMalformedLinear16() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getSarvam().setEnabled(true);
+        properties.getSarvam().setTtsEnabled(true);
+        properties.getSarvam().setApiKey("key");
+        properties.getSarvam().setBaseUrl("http://sarvam.test");
+        properties.getSarvam().setTtsPath("/text-to-speech");
+        SarvamTextToSpeechProvider provider = new SarvamTextToSpeechProvider(properties,
+                new RestTemplateBuilder(), new ObjectMapper());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
+                .andRespond(withSuccess(new byte[]{1, 2, 3}, MediaType.parseMediaType("audio/mpeg")));
+        server.expect(once(), requestTo("http://sarvam.test/text-to-speech"))
+                .andRespond(withSuccess("{\"request_id\":\"test\",\"audios\":[\"AQID\"]}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "hi-IN")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "hi-IN")))
+                .isInstanceOf(IllegalStateException.class);
+        server.verify();
+    }
+
+    private byte[] linear16Bytes() { return new byte[]{0, 1, 2, 3}; }
+    private String linear16Base64() { return Base64.getEncoder().encodeToString(linear16Bytes()); }
 }

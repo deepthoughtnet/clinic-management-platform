@@ -9,6 +9,13 @@ import com.deepthoughtnet.clinic.identity.db.TenantRepository;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
+import com.deepthoughtnet.clinic.carepilot.messaging.resolver.MessagingProviderRegistry;
+import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
+import com.deepthoughtnet.clinic.messaging.spi.MessageDeliveryStatus;
+import com.deepthoughtnet.clinic.messaging.spi.MessageRecipient;
+import com.deepthoughtnet.clinic.messaging.spi.MessageRequest;
+import com.deepthoughtnet.clinic.messaging.spi.MessageProvider;
+import com.deepthoughtnet.clinic.messaging.spi.MessageResult;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -22,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
@@ -39,6 +47,7 @@ public class PatientPortalOtpService {
     private final PatientPortalOtpChallengeRepository challengeRepository;
     private final PatientPortalSessionTokenService sessionTokenService;
     private final PatientPortalAuthProperties properties;
+    private final MessagingProviderRegistry messagingProviderRegistry;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -51,6 +60,21 @@ public class PatientPortalOtpService {
             PatientPortalSessionTokenService sessionTokenService,
             PatientPortalAuthProperties properties
     ) {
+        this(tenantRepository, patientRepository, appUserProvisioner, appUserRepository,
+                challengeRepository, sessionTokenService, properties, null);
+    }
+
+    @Autowired
+    public PatientPortalOtpService(
+            TenantRepository tenantRepository,
+            PatientRepository patientRepository,
+            AppUserProvisioner appUserProvisioner,
+            AppUserRepository appUserRepository,
+            PatientPortalOtpChallengeRepository challengeRepository,
+            PatientPortalSessionTokenService sessionTokenService,
+            PatientPortalAuthProperties properties,
+            MessagingProviderRegistry messagingProviderRegistry
+    ) {
         this.tenantRepository = tenantRepository;
         this.patientRepository = patientRepository;
         this.appUserProvisioner = appUserProvisioner;
@@ -58,6 +82,143 @@ public class PatientPortalOtpService {
         this.challengeRepository = challengeRepository;
         this.sessionTokenService = sessionTokenService;
         this.properties = properties;
+        this.messagingProviderRegistry = messagingProviderRegistry;
+    }
+
+    /** Voice-only challenge entry point. It shares the portal challenge table and hash policy,
+     * but never returns a development code or creates a portal session. */
+    @Transactional
+    public VoiceChallengeStart startVoiceChallenge(UUID tenantId, UUID identifiedPatientId,
+            String mobile, String providerCallId, UUID interactionId) {
+        if (tenantId == null || identifiedPatientId == null || !StringUtils.hasText(providerCallId)
+                || properties.getMode() != PatientPortalAuthProperties.Mode.OTP
+                || messagingProviderRegistry == null) {
+            return VoiceChallengeStart.failed("UNAVAILABLE", null, 0);
+        }
+        String normalizedPhone = normalizePhone(mobile);
+        PatientEntity patient = patientRepository.findById(identifiedPatientId).orElse(null);
+        if (patient == null || !tenantId.equals(patient.getTenantId()) || !patient.isActive()
+                || !sameRegisteredMobile(normalizedPhone, normalizePhone(patient.getMobile()))) {
+            return VoiceChallengeStart.failed("INELIGIBLE", null, 0);
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        var latest = challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(tenantId, normalizedPhone);
+        if (latest.isPresent()) {
+            long elapsed = Duration.between(latest.get().getCreatedAt(), now).getSeconds();
+            long cooldown = properties.getResendCooldown().getSeconds();
+            if (elapsed < cooldown) return VoiceChallengeStart.failed("COOLDOWN", latest.get().getId(), cooldown - elapsed);
+        }
+        String code = generateOtp();
+        PatientPortalOtpChallengeEntity challenge = challengeRepository.save(PatientPortalOtpChallengeEntity.createVoice(
+                tenantId, identifiedPatientId, normalizedPhone, passwordEncoder.encode(code),
+                now.plus(properties.getOtpTtl()), providerCallId, interactionId));
+        MessageProvider provider = messagingProviderRegistry.resolve(MessageChannel.SMS);
+        if (provider == null || !isVoiceDeliveryProvider(provider.providerName())) {
+            challengeRepository.delete(challenge);
+            return VoiceChallengeStart.failed("DELIVERY_UNAVAILABLE", null, 0);
+        }
+        MessageResult delivery;
+        try {
+            delivery = provider.send(new MessageRequest(tenantId, MessageChannel.SMS,
+                    new MessageRecipient(normalizedPhone, null), "Patient verification code",
+                    "Your verification code is " + code + ". It expires in " + properties.getOtpTtl().toMinutes()
+                            + " minutes. Do not share this code.", null,
+                    "VOICE_PATIENT_AUTH", null, null,
+                    java.util.Map.of("channel", "VOICE", "callCorrelation", safeCorrelation(providerCallId, interactionId))));
+        } catch (RuntimeException failure) {
+            challengeRepository.delete(challenge);
+            return VoiceChallengeStart.failed("DELIVERY_FAILED", null, 0);
+        }
+        if (delivery == null || !delivery.success() || (delivery.status() != MessageDeliveryStatus.SENT
+                && delivery.status() != MessageDeliveryStatus.QUEUED && delivery.status() != MessageDeliveryStatus.DELIVERED)) {
+            challengeRepository.delete(challenge);
+            return VoiceChallengeStart.failed("DELIVERY_FAILED", null, 0);
+        }
+        log.info("patient.portal.voice_auth.challenge_sent tenantId={} challengeId={} provider={}",
+                tenantId, challenge.getId(), delivery.providerName());
+        return new VoiceChallengeStart(true, "SENT", challenge.getId(), challenge.getExpiresAt(), 0);
+    }
+
+    /** Verifies the exact challenge captured in the call-scoped V2 session; no portal token is issued. */
+    @Transactional
+    public VoiceAuthenticationResult verifyVoiceChallenge(UUID challengeId, UUID tenantId,
+            UUID identifiedPatientId, String mobile, String providerCallId, UUID interactionId, String otp) {
+        if (challengeId == null || tenantId == null || identifiedPatientId == null
+                || !StringUtils.hasText(providerCallId) || properties.getMode() != PatientPortalAuthProperties.Mode.OTP) {
+            return VoiceAuthenticationResult.denied("BINDING_MISMATCH", null);
+        }
+        PatientPortalOtpChallengeEntity challenge = challengeRepository.findById(challengeId).orElse(null);
+        String normalizedPhone = normalizePhone(mobile);
+        PatientEntity patient = patientRepository.findById(identifiedPatientId).orElse(null);
+        if (challenge == null || !tenantId.equals(challenge.getTenantId())
+                || !"VOICE".equals(challenge.getChannel())
+                || !identifiedPatientId.equals(challenge.getIdentifiedPatientId())
+                || !providerCallId.equals(challenge.getProviderCallId())
+                || !java.util.Objects.equals(interactionId, challenge.getInteractionId())
+                || !normalizedPhone.equals(challenge.getPhoneNormalized())
+                || patient == null || !tenantId.equals(patient.getTenantId()) || !patient.isActive()
+                || !sameRegisteredMobile(normalizedPhone, normalizePhone(patient.getMobile()))) {
+            return VoiceAuthenticationResult.denied("BINDING_MISMATCH", challenge == null ? null : challenge.getExpiresAt());
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        if (challenge.isVerified()) return VoiceAuthenticationResult.denied("ALREADY_USED", challenge.getExpiresAt());
+        if (challenge.getExpiresAt().isBefore(now)) return VoiceAuthenticationResult.denied("EXPIRED", challenge.getExpiresAt());
+        if (challenge.getAttempts() >= properties.getMaxAttempts()) return VoiceAuthenticationResult.denied("LOCKED", challenge.getExpiresAt());
+        if (!passwordEncoder.matches(normalizeOtp(otp), challenge.getOtpHash())) {
+            challenge.incrementAttempts();
+            challengeRepository.save(challenge);
+            return VoiceAuthenticationResult.denied(challenge.getAttempts() >= properties.getMaxAttempts()
+                    ? "LOCKED" : "FAILED", challenge.getExpiresAt());
+        }
+        challenge.markVerified();
+        challengeRepository.save(challenge);
+        String subject = patientSubject(tenantId, identifiedPatientId);
+        UUID appUserId = appUserProvisioner.upsertAndReturnId(tenantId, subject, null,
+                patient.getFirstName() + " " + patient.getLastName());
+        appUserRepository.findByTenantIdAndId(tenantId, appUserId)
+                .ifPresent(appUser -> appUser.setPatientId(identifiedPatientId));
+        return new VoiceAuthenticationResult(true, "VERIFIED", identifiedPatientId, appUserId,
+                "OTP", now.toInstant(), now.plus(Duration.ofMinutes(15)).toInstant(), challenge.getExpiresAt());
+    }
+
+    /** True only for a previously successful Voice OTP bound to this current patient/mobile/tenant tuple. */
+    @Transactional(readOnly = true)
+    public boolean hasPreviouslyVerifiedVoicePhoneBinding(UUID tenantId, UUID patientId, String mobile) {
+        if (tenantId == null || patientId == null || !StringUtils.hasText(mobile)) return false;
+        PatientEntity patient = patientRepository.findById(patientId).orElse(null);
+        if (patient == null || !tenantId.equals(patient.getTenantId()) || !patient.isActive()) return false;
+        String normalizedInbound = normalizePhone(mobile);
+        String normalizedStored = normalizePhone(patient.getMobile());
+        if (!sameRegisteredMobile(normalizedInbound, normalizedStored)) return false;
+        return challengeRepository.existsByTenantIdAndIdentifiedPatientIdAndPhoneNormalizedAndChannelAndVerifiedAtIsNotNull(
+                tenantId, patientId, normalizedInbound, "VOICE");
+    }
+
+    private String safeCorrelation(String callId, UUID interactionId) {
+        return interactionId == null ? callId : interactionId.toString();
+    }
+
+    private boolean isVoiceDeliveryProvider(String providerName) {
+        if (!StringUtils.hasText(providerName)) return false;
+        String normalized = providerName.trim().toLowerCase(Locale.ROOT);
+        return !normalized.contains("mock") && !normalized.contains("noop")
+                && !normalized.contains("not_configured") && !normalized.contains("not-configured")
+                && !normalized.startsWith("dev-");
+    }
+
+    public record VoiceChallengeStart(boolean sent, String status, UUID challengeId,
+                                      OffsetDateTime expiresAt, long retryAfterSeconds) {
+        static VoiceChallengeStart failed(String status, UUID challengeId, long retryAfter) {
+            return new VoiceChallengeStart(false, status, challengeId, null, retryAfter);
+        }
+    }
+
+    public record VoiceAuthenticationResult(boolean verified, String status, UUID authenticatedPatientId,
+            UUID appUserId, String authenticationMethod, java.time.Instant verifiedAt,
+            java.time.Instant expiresAt, OffsetDateTime challengeExpiresAt) {
+        static VoiceAuthenticationResult denied(String status, OffsetDateTime expiry) {
+            return new VoiceAuthenticationResult(false, status, null, null, null, null, null, expiry);
+        }
     }
 
     @Transactional
@@ -131,8 +292,9 @@ public class PatientPortalOtpService {
 
         UUID tenantId = tenant == null ? null : tenant.getId();
         var latestChallenge = tenantId == null
-                ? challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc(normalizedPhone)
-                : challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(tenantId, normalizedPhone);
+                ? challengeRepository.findTopByPhoneNormalizedAndChannelIsNullOrderByCreatedAtDesc(normalizedPhone)
+                : challengeRepository.findTopByTenantIdAndPhoneNormalizedAndChannelIsNullOrderByCreatedAtDesc(
+                        tenantId, normalizedPhone);
         if (latestChallenge.isEmpty()) {
             return new PatientPortalOtpVerifyResponse(false, false, false, SAFE_VERIFY_FAILURE_MESSAGE, null, null, null, null, null);
         }
@@ -273,6 +435,14 @@ public class PatientPortalOtpService {
             throw new IllegalArgumentException("Phone is required");
         }
         return normalized;
+    }
+
+    private boolean sameRegisteredMobile(String callerDigits, String storedDigits) {
+        if (callerDigits.equals(storedDigits)) return true;
+        return callerDigits.length() == 12 && callerDigits.startsWith("91")
+                && callerDigits.substring(2).equals(storedDigits)
+                || storedDigits.length() == 12 && storedDigits.startsWith("91")
+                && storedDigits.substring(2).equals(callerDigits);
     }
 
     private String normalizeOtp(String rawOtp) {

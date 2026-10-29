@@ -39,7 +39,7 @@ public final class AivaV2Models {
     public enum AvailabilityTimeConstraintMode { EXACT, AFTER, BEFORE, BETWEEN, EXCLUDE }
 
     public enum DraftStatus {
-        COLLECTING, READY_FOR_CONFIRMATION, SUBMITTING, CONFIRMED, ABANDONED, EXPIRED
+        COLLECTING, PREPARED, READY_FOR_CONFIRMATION, SUBMITTING, CONFIRMED, ABANDONED, EXPIRED
     }
 
     public enum ResolutionStatus { RESOLVED, AMBIGUOUS, NOT_FOUND, SUGGESTION }
@@ -284,10 +284,22 @@ public final class AivaV2Models {
             List<ProviderCandidate> candidates,
             ProviderCandidate resolvedProvider,
             Instant generatedAt,
-            Instant expiresAt
+            Instant expiresAt,
+            String originatingTurnId
     ) {
+        public ProviderSearchResult(UUID resultId, ResolutionStatus status, String criteriaFingerprint,
+                                    List<ProviderCandidate> candidates, ProviderCandidate resolvedProvider,
+                                    Instant generatedAt, Instant expiresAt) {
+            this(resultId, status, criteriaFingerprint, candidates, resolvedProvider, generatedAt, expiresAt, null);
+        }
+
         public ProviderSearchResult {
             candidates = candidates == null ? List.of() : List.copyOf(candidates);
+        }
+
+        public ProviderSearchResult fromTurn(String turnId) {
+            return new ProviderSearchResult(resultId, status, criteriaFingerprint, candidates, resolvedProvider,
+                    generatedAt, expiresAt, turnId);
         }
     }
 
@@ -512,8 +524,141 @@ public final class AivaV2Models {
             long version,
             Instant expiresAt,
             AppointmentSummary activeAppointmentReferent,
-            ProviderCandidate activeVoiceDoctor
+            ProviderCandidate activeVoiceDoctor,
+            VoiceClarificationState voiceClarificationState,
+            VoiceAuthenticationState voiceAuthenticationState,
+            VoiceGuestRegistrationState voiceGuestRegistrationState,
+            VoicePresentationMode presentationMode,
+            CompletedBookingOutcome completedBookingOutcome
     ) {
+        /** Compatibility constructor for projections created before completed Voice outcomes existed. */
+        public SessionProjection(String conversationId, UUID patientId, String tenantId, BookingDraft activeDraft,
+                BookingDraft suspendedDraft, ProviderSearchResult latestProviderResult,
+                AvailabilityResult latestAvailabilityResult, BookingConfirmation pendingConfirmation,
+                CancellationConfirmation pendingCancellation, CancellationResolution pendingCancellationResolution,
+                RescheduleResolution pendingReschedule, RescheduleConfirmation pendingRescheduleConfirmation,
+                TemporalClarification pendingTemporalClarification, boolean closed, long version, Instant expiresAt,
+                AppointmentSummary activeAppointmentReferent, ProviderCandidate activeVoiceDoctor,
+                VoiceClarificationState voiceClarificationState, VoiceAuthenticationState voiceAuthenticationState,
+                VoiceGuestRegistrationState voiceGuestRegistrationState, VoicePresentationMode presentationMode) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification, closed, version,
+                    expiresAt, activeAppointmentReferent, activeVoiceDoctor, voiceClarificationState,
+                    voiceAuthenticationState, voiceGuestRegistrationState, presentationMode, null);
+        }
+
+        /** Compatibility constructor for projections created before presentation mode was persisted. */
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                BookingDraft activeDraft, BookingDraft suspendedDraft, ProviderSearchResult latestProviderResult,
+                AvailabilityResult latestAvailabilityResult, BookingConfirmation pendingConfirmation,
+                CancellationConfirmation pendingCancellation, CancellationResolution pendingCancellationResolution,
+                RescheduleResolution pendingReschedule, RescheduleConfirmation pendingRescheduleConfirmation,
+                TemporalClarification pendingTemporalClarification, boolean closed, long version, Instant expiresAt,
+                AppointmentSummary activeAppointmentReferent, ProviderCandidate activeVoiceDoctor,
+                VoiceClarificationState voiceClarificationState, VoiceAuthenticationState voiceAuthenticationState,
+                VoiceGuestRegistrationState voiceGuestRegistrationState) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification, closed, version,
+                    expiresAt, activeAppointmentReferent, activeVoiceDoctor, voiceClarificationState,
+                    voiceAuthenticationState, voiceGuestRegistrationState, null);
+        }
+
+        /** Derived workflow label; persisted draft/pending state remains the single source of truth. */
+        public String activeWorkflow() {
+            if (pendingReschedule() != null || pendingRescheduleConfirmation() != null) return "RESCHEDULE";
+            if (pendingCancellation() != null || pendingCancellationResolution() != null) return "CANCELLATION";
+            if (pendingConfirmation() != null) return "BOOKING_CONFIRMATION";
+            if (activeDraft() != null) return "BOOKING";
+            return "NONE";
+        }
+
+        /** Sets the booking subject without asserting that this patient is authenticated. */
+        public SessionProjection withPatientId(UUID bookingPatientId) {
+            return new SessionProjection(conversationId, bookingPatientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
+        }
+
+        public SessionProjection withBookingDraft(BookingDraft draft) {
+            return new SessionProjection(conversationId, patientId, tenantId, draft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
+        }
+
+        /** Stores the call-scoped final booking confirmation using the existing transactional slot model. */
+        public SessionProjection withPendingBookingConfirmation(BookingConfirmation confirmation, BookingDraft draft) {
+            return new SessionProjection(conversationId, patientId, tenantId, draft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, confirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
+        }
+
+        /** Compatibility constructor for projections created before guest registration state existed. */
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                BookingDraft activeDraft, BookingDraft suspendedDraft, ProviderSearchResult latestProviderResult,
+                AvailabilityResult latestAvailabilityResult, BookingConfirmation pendingConfirmation,
+                CancellationConfirmation pendingCancellation, CancellationResolution pendingCancellationResolution,
+                RescheduleResolution pendingReschedule, RescheduleConfirmation pendingRescheduleConfirmation,
+                TemporalClarification pendingTemporalClarification, boolean closed, long version, Instant expiresAt,
+                AppointmentSummary activeAppointmentReferent, ProviderCandidate activeVoiceDoctor,
+                VoiceClarificationState voiceClarificationState, VoiceAuthenticationState voiceAuthenticationState) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification, closed, version,
+                    expiresAt, activeAppointmentReferent, activeVoiceDoctor, voiceClarificationState,
+                    voiceAuthenticationState, null);
+        }
+
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                                 BookingDraft activeDraft, BookingDraft suspendedDraft,
+                                 ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
+                                 BookingConfirmation pendingConfirmation, Instant expiresAt) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, null, null, null, null, null,
+                    false, 1L, expiresAt, null, null, null, null);
+        }
+
+        /** Compatibility constructor for projections serialized/created before Voice auth state existed. */
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                                 BookingDraft activeDraft, BookingDraft suspendedDraft,
+                                 ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
+                                 BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
+                                 CancellationResolution pendingCancellationResolution, RescheduleResolution pendingReschedule,
+                                 RescheduleConfirmation pendingRescheduleConfirmation,
+                                 TemporalClarification pendingTemporalClarification, boolean closed,
+                                 long version, Instant expiresAt, AppointmentSummary activeAppointmentReferent,
+                                 ProviderCandidate activeVoiceDoctor, VoiceClarificationState voiceClarificationState) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification, closed, version,
+                    expiresAt, activeAppointmentReferent, activeVoiceDoctor, voiceClarificationState, null);
+        }
+        /** Backward-compatible constructor for callers that do not provide Voice recovery state. */
+        public SessionProjection(String conversationId, UUID patientId, String tenantId,
+                                 BookingDraft activeDraft, BookingDraft suspendedDraft,
+                                 ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
+                                 BookingConfirmation pendingConfirmation, CancellationConfirmation pendingCancellation,
+                                 CancellationResolution pendingCancellationResolution, RescheduleResolution pendingReschedule,
+                                 RescheduleConfirmation pendingRescheduleConfirmation,
+                                 TemporalClarification pendingTemporalClarification, boolean closed,
+                                 long version, Instant expiresAt, AppointmentSummary activeAppointmentReferent,
+                                 ProviderCandidate activeVoiceDoctor) {
+            this(conversationId, patientId, tenantId, activeDraft, suspendedDraft, latestProviderResult,
+                    latestAvailabilityResult, pendingConfirmation, pendingCancellation, pendingCancellationResolution,
+                    pendingReschedule, pendingRescheduleConfirmation, pendingTemporalClarification, closed,
+                    version, expiresAt, activeAppointmentReferent, activeVoiceDoctor, null, null);
+        }
+
         public SessionProjection(String conversationId, UUID patientId, String tenantId,
                                  BookingDraft activeDraft, BookingDraft suspendedDraft,
                                  ProviderSearchResult latestProviderResult, AvailabilityResult latestAvailabilityResult,
@@ -587,14 +732,18 @@ public final class AivaV2Models {
             return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
                     latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
                     pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
-                    clarification, closed, version, expiresAt, activeAppointmentReferent, activeVoiceDoctor);
+                    clarification, closed, version, expiresAt, activeAppointmentReferent, activeVoiceDoctor,
+                    voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
         }
 
         public SessionProjection withAppointmentReferent(AppointmentSummary referent) {
             return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
                     latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
                     pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
-                    pendingTemporalClarification, closed, version, expiresAt, referent, activeVoiceDoctor);
+                    pendingTemporalClarification, closed, version, expiresAt, referent, activeVoiceDoctor,
+                    voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
         }
 
         /** Stores the latest read-only provider discovery result for a channel-neutral follow-up turn. */
@@ -603,7 +752,8 @@ public final class AivaV2Models {
                     providerResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
                     pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
                     pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
-                    activeVoiceDoctor);
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
         }
 
         /** Retains only the latest read-only Voice slot page/context for daypart choice and pagination. */
@@ -612,7 +762,8 @@ public final class AivaV2Models {
                     latestProviderResult, availabilityResult, pendingConfirmation, pendingCancellation,
                     pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
                     pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
-                    activeVoiceDoctor);
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
         }
 
         /** Durable call-scoped provider identity, independent of transient availability/paging state. */
@@ -620,19 +771,220 @@ public final class AivaV2Models {
             return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
                     latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
                     pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
-                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent, doctor);
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent, doctor,
+                    voiceClarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
+        }
+
+        public SessionProjection withVoiceClarificationState(VoiceClarificationState clarificationState) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, clarificationState, voiceAuthenticationState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
+        }
+
+        public SessionProjection withVoiceAuthenticationState(VoiceAuthenticationState authState) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, voiceClarificationState, authState, voiceGuestRegistrationState,
+                    presentationMode, completedBookingOutcome);
+        }
+
+        public SessionProjection withVoiceGuestRegistrationState(VoiceGuestRegistrationState guestState) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState, guestState,
+                    presentationMode, completedBookingOutcome);
+        }
+
+        public SessionProjection withPresentationMode(VoicePresentationMode mode) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState,
+                    voiceGuestRegistrationState, mode, completedBookingOutcome);
+        }
+
+        public SessionProjection withCompletedBookingOutcome(CompletedBookingOutcome outcome) {
+            return new SessionProjection(conversationId, patientId, tenantId, activeDraft, suspendedDraft,
+                    latestProviderResult, latestAvailabilityResult, pendingConfirmation, pendingCancellation,
+                    pendingCancellationResolution, pendingReschedule, pendingRescheduleConfirmation,
+                    pendingTemporalClarification, closed, version + 1, expiresAt, activeAppointmentReferent,
+                    activeVoiceDoctor, voiceClarificationState, voiceAuthenticationState,
+                    voiceGuestRegistrationState, presentationMode, outcome);
         }
 
         public SessionProjection close() {
             return new SessionProjection(conversationId, patientId, tenantId, null, null, null, null,
-                    null, null, null, null, null, null, true, version + 1, expiresAt, null, null);
+                    null, null, null, null, null, null, true, version + 1, expiresAt,
+                    null, null, null, null).withPresentationMode(presentationMode);
         }
 
         /** Clears transient workflow state while preserving conversation lifecycle and identity. */
         public SessionProjection clearTransientWorkflow() {
             return new SessionProjection(conversationId, patientId, tenantId, null, null, null, null,
-                    null, null, null, null, null, null, closed, version + 1, expiresAt, null, null);
+                    null, null, null, null, null, null, closed, version + 1, expiresAt,
+                    null, null, null, null, null,
+                    presentationMode, completedBookingOutcome);
         }
+    }
+
+    /** Minimal call-scoped result for safe repeat and receipt reconciliation after a completed booking. */
+    public record CompletedBookingOutcome(UUID appointmentId, String bookingReference,
+            String providerDisplayName, LocalDate date, LocalTime time, Instant completedAt,
+            UUID tenantId, UUID patientId, String providerCallId, String executionReference,
+            String source, String status) {
+        public CompletedBookingOutcome {
+            source = source == null ? "VOICE" : source;
+            status = status == null ? "CONFIRMED" : status;
+        }
+    }
+
+    public enum VoicePresentationMode { HINDI, HINGLISH, ENGLISH }
+
+    public enum VoiceClarificationKind { DOCTOR, PROVIDER_IDENTITY, INTENT, MISSING_INFO, UNSUPPORTED }
+
+    public enum VoiceUnresolvedReason {
+        AMBIGUOUS_DOCTOR,
+        AMBIGUOUS_INTENT,
+        MISSING_REQUIRED_INFO,
+        UNSUPPORTED_REQUEST,
+        REPEATED_CLARIFICATION_FAILURE,
+        CALLER_REQUESTED_HUMAN,
+        SYSTEM_ERROR
+    }
+
+    /** Bounded, transient recovery state stored inside the existing call-scoped V2 session. */
+    public record VoiceClarificationState(
+            VoiceClarificationKind kind,
+            int attemptCount,
+            VoiceUnresolvedReason unresolvedReason,
+            List<String> candidateOptions,
+            boolean escalationDecision,
+            String pendingAction,
+            String resumeContext,
+            List<VoiceProviderIdentityCandidate> canonicalProviderCandidates,
+            boolean confirmSingleProviderCandidate,
+            PendingProviderSwitch pendingProviderSwitch
+    ) {
+        public VoiceClarificationState(VoiceClarificationKind kind, int attemptCount,
+                VoiceUnresolvedReason unresolvedReason, List<String> candidateOptions,
+                boolean escalationDecision, String pendingAction, String resumeContext,
+                List<VoiceProviderIdentityCandidate> canonicalProviderCandidates,
+                boolean confirmSingleProviderCandidate) {
+            this(kind, attemptCount, unresolvedReason, candidateOptions, escalationDecision,
+                    pendingAction, resumeContext, canonicalProviderCandidates,
+                    confirmSingleProviderCandidate, null);
+        }
+
+        public VoiceClarificationState(VoiceClarificationKind kind, int attemptCount,
+                VoiceUnresolvedReason unresolvedReason, List<String> candidateOptions,
+                boolean escalationDecision, String pendingAction, String resumeContext) {
+            this(kind, attemptCount, unresolvedReason, candidateOptions, escalationDecision,
+                    pendingAction, resumeContext, List.of(), false);
+        }
+
+        public VoiceClarificationState(VoiceClarificationKind kind, int attemptCount,
+                VoiceUnresolvedReason unresolvedReason, List<String> candidateOptions,
+                boolean escalationDecision) {
+            this(kind, attemptCount, unresolvedReason, candidateOptions, escalationDecision,
+                    null, null, List.of(), false);
+        }
+
+        public VoiceClarificationState {
+            kind = kind == null ? VoiceClarificationKind.UNSUPPORTED : kind;
+            attemptCount = Math.max(0, Math.min(attemptCount, 2));
+            unresolvedReason = unresolvedReason == null
+                    ? VoiceUnresolvedReason.UNSUPPORTED_REQUEST : unresolvedReason;
+            candidateOptions = candidateOptions == null ? List.of()
+                    : candidateOptions.stream().filter(java.util.Objects::nonNull).limit(3).toList();
+            pendingAction = pendingAction == null || pendingAction.isBlank() ? null : pendingAction;
+            resumeContext = resumeContext == null || resumeContext.isBlank() ? null : resumeContext;
+            canonicalProviderCandidates = canonicalProviderCandidates == null ? List.of()
+                    : canonicalProviderCandidates.stream().filter(java.util.Objects::nonNull).limit(3).toList();
+            if (pendingProviderSwitch != null) pendingAction = "PROVIDER_SWITCH_CONFIRMATION";
+        }
+    }
+
+    /** Tenant-bound target and origin snapshot for an explicit provider-switch confirmation. */
+    public record PendingProviderSwitch(
+            UUID tenantId,
+            String currentProviderId,
+            String targetProviderId,
+            String targetDisplayName,
+            UUID originatingDraftId,
+            long originatingDraftRevision,
+            String originatingContext,
+            LocalDate requestedDate,
+            String requestedTimeWindow,
+            LocalTime requestedExactTime,
+            UUID availabilityId,
+            int displayOffset,
+            String selectedSlotReference,
+            String confirmationReference,
+            String reason
+    ) {
+        public PendingProviderSwitch {
+            originatingDraftRevision = Math.max(0, originatingDraftRevision);
+            displayOffset = Math.max(0, displayOffset);
+            reason = reason == null || reason.isBlank() ? "USER_REQUESTED_PROVIDER_CHANGE" : reason;
+        }
+    }
+
+    /** Minimal tenant-bound identity evidence; executable capability is re-resolved when selected. */
+    public record VoiceProviderIdentityCandidate(String providerId, UUID tenantId, String displayName) { }
+
+    /** Non-secret call-scoped authentication state. The OTP and its hash remain only in the auth challenge service. */
+    public record VoiceAuthenticationState(
+            String state,
+            UUID challengeId,
+            UUID tenantId,
+            UUID identifiedPatientId,
+            String providerCallId,
+            UUID interactionId,
+            Instant challengeExpiresAt,
+            int attemptCount,
+            AivaTransactionAuthorization authorization,
+            String requestedOperation
+    ) {
+        public VoiceAuthenticationState(String state, UUID challengeId, UUID tenantId, UUID identifiedPatientId,
+                String providerCallId, UUID interactionId, Instant challengeExpiresAt, int attemptCount,
+                AivaTransactionAuthorization authorization) {
+            this(state, challengeId, tenantId, identifiedPatientId, providerCallId, interactionId,
+                    challengeExpiresAt, attemptCount, authorization, null);
+        }
+
+        public VoiceAuthenticationState {
+            state = state == null ? "REQUIRED" : state;
+            attemptCount = Math.max(0, attemptCount);
+        }
+    }
+
+    /** PII-free guest registration progress and narrow capability metadata. */
+    public record VoiceGuestRegistrationState(
+            VoiceGuestRegistrationStatus status,
+            UUID tenantId,
+            UUID patientId,
+            String providerCallId,
+            UUID interactionId,
+            Instant capabilityExpiresAt,
+            boolean guestBookingCapabilityGranted
+    ) {
+        public VoiceGuestRegistrationState {
+            status = status == null ? VoiceGuestRegistrationStatus.NOT_STARTED : status;
+        }
+    }
+
+    public enum VoiceGuestRegistrationStatus {
+        NOT_STARTED, CONSENT_REQUESTED, MOBILE_CONFIRMATION_REQUESTED, COLLECTING_DETAILS,
+        DUPLICATE_CHECK, CREATED, CAPABILITY_GRANTED, FAILED
     }
 
     public record TemporalClarification(String kind, List<String> candidates, Operation originatingOperation,

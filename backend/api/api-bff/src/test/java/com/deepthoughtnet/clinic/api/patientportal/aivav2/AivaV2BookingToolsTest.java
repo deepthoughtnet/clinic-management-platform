@@ -71,6 +71,36 @@ class AivaV2BookingToolsTest {
     }
 
     @Test
+    void voiceProviderResolutionUsesExplicitTenantWithoutPortalRequestContext() {
+        RequestContextHolder.clear();
+        when(patientPortalService.careAiDoctorsForTenant(TENANT)).thenReturn(List.of(careDoctor()));
+
+        var result = tools.resolveBookingProviderForTenant("Doc Akshu Kumar", null, null, TENANT);
+
+        assertThat(result.status()).isEqualTo(ResolutionStatus.RESOLVED);
+        assertThat(result.resolvedProvider().tenantId()).isEqualTo(TENANT.toString());
+        assertThat(result.resolvedProvider().source()).isEqualTo(ProviderSource.CARE_PRIVATE);
+        assertThat(result.resolvedProvider().capabilities().onlineBooking()).isTrue();
+        assertThat(result.resolvedProvider().bookingReference()).isNull();
+        org.mockito.Mockito.verify(patientPortalService).careAiDoctorsForTenant(TENANT);
+        org.mockito.Mockito.verify(patientPortalService, org.mockito.Mockito.never())
+                .careAiDoctorsAcrossAuthorizedClinics();
+    }
+
+    @Test
+    void canonicalHindiTransliterationResolvesToTheExactTenantProviderInsteadOfSuggestion() {
+        PatientPortalCareAiDoctorOption amit = new PatientPortalCareAiDoctorOption("doctor-amit", "Dr Amit Verma",
+                "General Medicine", UUID.randomUUID(), UUID.randomUUID(), TENANT, "clinic", "Clinic");
+        when(patientPortalService.careAiDoctorsForTenant(TENANT)).thenReturn(List.of(amit));
+
+        var result = tools.resolveBookingProviderForTenant("Dr Amit Varma", null, null, TENANT);
+
+        assertThat(result.status()).isEqualTo(ResolutionStatus.RESOLVED);
+        assertThat(result.resolvedProvider().doctorId()).isEqualTo("doctor-amit");
+        assertThat(result.resolvedProvider().displayName()).isEqualTo("Dr Amit Verma");
+    }
+
+    @Test
     void uniqueSpecialtyResolvesAndBindsAuthoritativeProvider() {
         when(patientPortalService.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(List.of(careDoctor()));
 
@@ -157,6 +187,28 @@ class AivaV2BookingToolsTest {
     }
 
     @Test
+    void publicProviderWithoutAuthoritativeOnlineBookingRemainsNotBookable() {
+        when(patientPortalService.careAiDoctorsAcrossAuthorizedClinics()).thenReturn(List.of());
+        when(publicCatalogFacade.listDoctors(nullable(String.class), nullable(String.class), nullable(String.class),
+                nullable(String.class), nullable(String.class), nullable(String.class), nullable(java.math.BigDecimal.class),
+                nullable(java.math.BigDecimal.class), nullable(Integer.class), anyInt(), anyInt()))
+                .thenReturn(new PublicPageResponse<>(List.of(
+                        publicDoctor("public-no-booking", "Dr No Online Booking", "INQUIRY", false)), 0, 50, 1, 1));
+        ProviderCandidate provider = tools.resolveBookingProvider("No Online Booking", null).resolvedProvider();
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), TENANT.toString(), provider,
+                null, LocalDate.of(2026, 9, 14), null, null, null, null, DraftStatus.COLLECTING, 1,
+                Instant.parse("2026-09-10T01:00:00Z"), null);
+
+        var result = tools.getBookingAvailability(draft, TENANT);
+
+        assertThat(provider.capabilities().onlineBooking()).isFalse();
+        assertThat(result.category()).isEqualTo("NOT_BOOKABLE");
+        org.mockito.Mockito.verify(patientPortalService, org.mockito.Mockito.never())
+                .doctorAvailability(nullable(String.class), nullable(String.class), nullable(String.class),
+                        nullable(String.class), nullable(String.class), nullable(LocalDate.class));
+    }
+
+    @Test
     void availabilityUsesRealPatientPortalContractAndStableSlotReference() {
         ProviderCandidate provider = new ProviderCandidate("provider", "provider", "doctor-1", null,
                 TENANT.toString(), null, null, "Doc Akshu Kumar", "General Medicine", null,
@@ -164,17 +216,47 @@ class AivaV2BookingToolsTest {
         BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), TENANT.toString(), provider,
                 null, LocalDate.parse("2026-09-11"), null, null, null, null,
                 AivaV2Models.DraftStatus.COLLECTING, 3, Instant.parse("2026-09-10T01:00:00Z"), null);
-        when(patientPortalService.doctorAvailability(null, "doctor-1", null, TENANT.toString(), null,
-                LocalDate.parse("2026-09-11"))).thenReturn(new PatientPortalDoctorAvailabilityResponse(
-                LocalDate.parse("2026-09-11"), List.of(new PatientPortalDoctorSlotResponse(
+        when(patientPortalService.doctorSlotsForTenant(TENANT, "doctor-1", null,
+                LocalDate.parse("2026-09-11"))).thenReturn(List.of(new PatientPortalDoctorSlotResponse(
                 "care-slot-stable", LocalDate.parse("2026-09-11"), LocalTime.of(16, 30),
-                LocalTime.of(17, 0), "AVAILABLE", true)), List.of()));
+                LocalTime.of(17, 0), "AVAILABLE", true)));
+        RequestContextHolder.clear();
 
-        var result = tools.getBookingAvailability(draft);
+        var result = tools.getBookingAvailability(draft, TENANT);
 
         assertThat(result.category()).isEqualTo("SUCCESS");
         assertThat(result.value().slots()).extracting(AivaV2Models.AvailabilitySlot::slotReference)
                 .containsExactly("care-slot-stable");
+    }
+
+    @Test
+    void availabilityUsesExplicitTenantWhenProviderMetadataHasNoTenant() {
+        RequestContextHolder.clear();
+        LocalDate date = LocalDate.of(2026, 9, 11);
+        ProviderCandidate provider = new ProviderCandidate("provider", "provider", "doctor-1", null,
+                null, null, null, "Doc Akshu Kumar", "General Medicine", null,
+                ProviderSource.CARE_PRIVATE, new ProviderCapabilities(true, true, false, false, false, true, false));
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), null, provider,
+                null, date, null, null, null, null, DraftStatus.COLLECTING, 1,
+                Instant.parse("2026-09-10T01:00:00Z"), null);
+        when(patientPortalService.doctorSlotsForTenant(TENANT, "doctor-1", null, date))
+                .thenReturn(List.of(new PatientPortalDoctorSlotResponse("care-slot-tenant", date,
+                        LocalTime.of(10, 0), LocalTime.of(10, 30), "AVAILABLE", true)));
+
+        var result = tools.getBookingAvailability(draft, TENANT);
+
+        assertThat(result.category()).isEqualTo("SUCCESS");
+        assertThat(result.value().slots()).extracting(AivaV2Models.AvailabilitySlot::slotReference)
+                .containsExactly("care-slot-tenant");
+        org.mockito.Mockito.verify(patientPortalService).doctorSlotsForTenant(TENANT, "doctor-1", null, date);
+    }
+
+    @Test
+    void nullTenantFailsAtAvailabilityToolBoundaryBeforeAnyLookup() {
+        var result = tools.getBookingAvailability(null, null);
+
+        assertThat(result.category()).isEqualTo("TENANT_REQUIRED");
+        org.mockito.Mockito.verifyNoInteractions(patientPortalService);
     }
 
     @Test
@@ -193,7 +275,7 @@ class AivaV2BookingToolsTest {
                                 new PatientPortalDoctorSlotResponse("care-slot-next", exhausted.plusDays(2),
                                         LocalTime.of(10, 30), LocalTime.of(11, 0), "AVAILABLE", true))))));
 
-        var result = tools.getNextBookingAvailability(draft);
+        var result = tools.getNextBookingAvailability(draft, TENANT);
 
         assertThat(result.category()).isEqualTo("SUCCESS");
         assertThat(result.value().date()).isEqualTo(exhausted.plusDays(2));
@@ -217,16 +299,35 @@ class AivaV2BookingToolsTest {
                         AivaV2Models.AvailabilityTimeConstraintMode.AFTER, LocalTime.of(20, 0), null),
                 null, null, AivaV2Models.DraftStatus.COLLECTING, 3,
                 Instant.parse("2026-09-10T01:00:00Z"), null);
-        when(patientPortalService.doctorAvailability(null, "doctor-1", null, TENANT.toString(), null,
-                LocalDate.parse("2026-09-14"))).thenReturn(new PatientPortalDoctorAvailabilityResponse(
-                LocalDate.parse("2026-09-14"), List.of(
+        when(patientPortalService.doctorSlotsForTenant(TENANT,
+                "doctor-1", null, LocalDate.parse("2026-09-14"))).thenReturn(List.of(
                         new PatientPortalDoctorSlotResponse("before", LocalDate.parse("2026-09-14"), LocalTime.of(19, 30), LocalTime.of(20, 0), "AVAILABLE", true),
-                        new PatientPortalDoctorSlotResponse("after", LocalDate.parse("2026-09-14"), LocalTime.of(20, 30), LocalTime.of(21, 0), "AVAILABLE", true)), List.of()));
+                        new PatientPortalDoctorSlotResponse("after", LocalDate.parse("2026-09-14"), LocalTime.of(20, 30), LocalTime.of(21, 0), "AVAILABLE", true)));
 
-        var result = tools.getBookingAvailability(draft);
+        var result = tools.getBookingAvailability(draft, TENANT);
 
         assertThat(result.value().slots()).extracting(AivaV2Models.AvailabilitySlot::slotReference)
                 .containsExactly("after");
+    }
+
+    @Test
+    void exactDraftTimeFiltersCanonicalAvailabilityWithoutVoiceSideSelection() {
+        ProviderCandidate provider = new ProviderCandidate("provider", "provider", "doctor-1", null,
+                TENANT.toString(), null, null, "Doc Akshu Kumar", "General Medicine", null,
+                ProviderSource.CARE_PRIVATE, new ProviderCapabilities(true, true, false, false, false, true, false));
+        LocalDate date = LocalDate.parse("2026-09-14");
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), TENANT.toString(), provider,
+                null, date, null, LocalTime.of(18, 0), null, null, null,
+                AivaV2Models.DraftStatus.COLLECTING, 3, Instant.parse("2026-09-10T01:00:00Z"), null);
+        when(patientPortalService.doctorSlotsForTenant(TENANT, "doctor-1", null, date))
+                .thenReturn(List.of(slot("17:30", "17:30"), slot("18:00", "18:00"), slot("18:30", "18:30")));
+
+        var result = tools.getBookingAvailability(draft, TENANT);
+
+        assertThat(result.value().slots()).extracting(AivaV2Models.AvailabilitySlot::slotReference)
+                .containsExactly("18:00");
+        assertThat(result.value().availabilityTimeConstraint().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.EXACT);
     }
 
     @Test
@@ -240,13 +341,12 @@ class AivaV2BookingToolsTest {
                         AivaV2Models.AvailabilityTimeConstraintMode.BETWEEN, LocalTime.of(18, 0), LocalTime.of(20, 0)),
                 null, null, AivaV2Models.DraftStatus.COLLECTING, 3,
                 Instant.parse("2026-09-10T01:00:00Z"), null);
-        when(patientPortalService.doctorAvailability(null, "doctor-1", null, TENANT.toString(), null,
-                LocalDate.parse("2026-09-14"))).thenReturn(new PatientPortalDoctorAvailabilityResponse(
-                LocalDate.parse("2026-09-14"), List.of(
+        when(patientPortalService.doctorSlotsForTenant(TENANT, "doctor-1", null,
+                LocalDate.parse("2026-09-14"))).thenReturn(List.of(
                         slot("lower", "18:00"), slot("inside", "18:30"), slot("upper", "20:00"),
-                        slot("after", "20:30")), List.of()));
+                        slot("after", "20:30")));
 
-        var result = tools.getBookingAvailability(draft);
+        var result = tools.getBookingAvailability(draft, TENANT);
 
         assertThat(result.value().slots()).extracting(AivaV2Models.AvailabilitySlot::slotReference)
                 .containsExactly("lower", "inside", "upper");

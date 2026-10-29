@@ -14,8 +14,6 @@ import org.springframework.stereotype.Component;
 /** Renders only typed AIVA facts. Legacy text is returned solely for unmigrated LEGACY responses. */
 @Component
 public class AivaResponseRenderer {
-    private static final DateTimeFormatter EN_DATE = DateTimeFormatter.ofPattern("d MMMM uuuu", Locale.ENGLISH);
-    private static final DateTimeFormatter HI_DATE = DateTimeFormatter.ofPattern("d MMMM uuuu", Locale.forLanguageTag("hi-IN"));
     private static final DateTimeFormatter EN_HOUR = DateTimeFormatter.ofPattern("h a", Locale.ENGLISH);
     private static final DateTimeFormatter EN_MINUTE = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH);
 
@@ -392,8 +390,7 @@ public class AivaResponseRenderer {
     }
 
     private String formatDate(LocalDate date, boolean hinglish, boolean hindi) {
-        if (date == null) return "";
-        return date.format(hindi && !hinglish ? HI_DATE : EN_DATE);
+        return AivaSpokenDateFormatter.format(date, hinglish, hindi);
     }
 
     private String formatTime(LocalTime time, boolean hinglish, boolean hindi) {

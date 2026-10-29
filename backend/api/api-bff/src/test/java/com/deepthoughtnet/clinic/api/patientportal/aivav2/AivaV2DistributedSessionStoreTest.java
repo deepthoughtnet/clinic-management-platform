@@ -74,6 +74,163 @@ class AivaV2DistributedSessionStoreTest {
     }
 
     @Test
+    void sameDotVoiceCallIdentifierRemainsTenantIsolatedAcrossRedisRoundTrip() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore writer = resources.store();
+            AivaV2SessionStore reader = resources.store();
+            String tenantAKey = "VOICE|tenant-a|same-dotvoice-call";
+            String tenantBKey = "VOICE|tenant-b|same-dotvoice-call";
+            var providerA = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate(
+                    "provider-a", "provider-a", "doctor-a", null, "tenant-a", null, null,
+                    "Dr Same Name", "General Medicine", null,
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSource.CARE_PRIVATE,
+                    new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCapabilities(
+                            false, true, false, false, false, false, true));
+            var providerB = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate(
+                    "provider-b", "provider-b", "doctor-b", null, "tenant-b", null, null,
+                    "Dr Same Name", "General Medicine", null,
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSource.CARE_PRIVATE,
+                    new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCapabilities(
+                            false, true, false, false, false, false, true));
+
+            writer.update(tenantAKey, ignored -> sessionForTenant("tenant-a", 1).withActiveVoiceDoctor(providerA));
+            writer.update(tenantBKey, ignored -> sessionForTenant("tenant-b", 1).withActiveVoiceDoctor(providerB));
+
+            SessionProjection restoredA = reader.find(tenantAKey).orElseThrow();
+            SessionProjection restoredB = reader.find(tenantBKey).orElseThrow();
+            assertThat(restoredA.activeVoiceDoctor().doctorId()).isEqualTo("doctor-a");
+            assertThat(restoredB.activeVoiceDoctor().doctorId()).isEqualTo("doctor-b");
+            assertThat(restoredA.tenantId()).isEqualTo("tenant-a");
+            assertThat(restoredB.tenantId()).isEqualTo("tenant-b");
+            assertThat(resources.redis().hasKey("aiva:v2:session:" + tenantAKey)).isTrue();
+            assertThat(resources.redis().hasKey("aiva:v2:session:" + tenantBKey)).isTrue();
+        }
+    }
+
+    @Test
+    void conversationPresentationModeSurvivesRedisSessionRoundTripAndWorkflowClearing() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore instanceA = resources.store();
+            AivaV2SessionStore instanceB = resources.store();
+            String key = "VOICE|tenant-a|provider-call-presentation";
+            instanceA.update(key, ignored -> session(1)
+                    .withPresentationMode(AivaV2Models.VoicePresentationMode.HINGLISH));
+
+            SessionProjection restored = instanceB.find(key).orElseThrow();
+            assertThat(restored.presentationMode()).isEqualTo(AivaV2Models.VoicePresentationMode.HINGLISH);
+            instanceB.update(key, SessionProjection::clearTransientWorkflow);
+            assertThat(instanceA.find(key).orElseThrow().presentationMode())
+                    .isEqualTo(AivaV2Models.VoicePresentationMode.HINGLISH);
+        }
+    }
+
+    @Test
+    void voiceClarificationStateSurvivesRedisSessionRoundTrip() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore instanceA = resources.store();
+            AivaV2SessionStore instanceB = resources.store();
+            String key = "VOICE|tenant-a|provider-call-clarification";
+            AivaV2Models.VoiceClarificationState clarification = new AivaV2Models.VoiceClarificationState(
+                    AivaV2Models.VoiceClarificationKind.DOCTOR, 2,
+                    AivaV2Models.VoiceUnresolvedReason.AMBIGUOUS_DOCTOR,
+                    List.of("Ravi Mehta", "Amit Verma"), false);
+
+            instanceA.update(key, ignored -> session(1).withVoiceClarificationState(clarification));
+
+            assertThat(instanceB.find(key).orElseThrow().voiceClarificationState()).isEqualTo(clarification);
+        }
+    }
+
+    @Test
+    void voiceAuthenticationGrantSurvivesRedisRoundTripAndIsClearedOnClose() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore instanceA = resources.store();
+            AivaV2SessionStore instanceB = resources.store();
+            String key = "VOICE|tenant-a|provider-call-auth";
+            var tenant = java.util.UUID.randomUUID();
+            var patient = java.util.UUID.randomUUID();
+            var auth = new AivaV2Models.VoiceAuthenticationState("VERIFIED", java.util.UUID.randomUUID(),
+                    tenant, patient, "provider-call-auth", java.util.UUID.randomUUID(), Instant.now().plusSeconds(300),
+                    1, new AivaTransactionAuthorization(AivaTransactionAuthorization.IdentityState.AUTHENTICATED,
+                    patient, AivaTransactionAuthorization.ActorType.VOICE_PATIENT, "app-user-real",
+                    java.util.Set.of(AivaTransactionAuthorization.Capability.BOOK_APPOINTMENT), "VOICE_OTP", "OTP",
+                    Instant.now().plusSeconds(300), tenant, "provider-call-auth"));
+            instanceA.update(key, ignored -> session(1).withVoiceAuthenticationState(auth));
+
+            assertThat(instanceB.find(key).orElseThrow().voiceAuthenticationState()).isEqualTo(auth);
+            instanceB.update(key, AivaV2Models.SessionProjection::close);
+            assertThat(instanceA.find(key).orElseThrow().voiceAuthenticationState()).isNull();
+        }
+    }
+
+    @Test
+    void guestRegistrationCapabilitySurvivesRedisRoundTripAndIsClearedOnSessionEnd() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore instanceA = resources.store();
+            AivaV2SessionStore instanceB = resources.store();
+            String key = "VOICE|tenant-guest|provider-call-guest";
+            var state = new AivaV2Models.VoiceGuestRegistrationState(
+                    AivaV2Models.VoiceGuestRegistrationStatus.CAPABILITY_GRANTED,
+                    java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), "provider-call-guest",
+                    java.util.UUID.randomUUID(), Instant.now().plusSeconds(600), true);
+            instanceA.update(key, ignored -> session(1).withVoiceGuestRegistrationState(state));
+
+            assertThat(instanceB.find(key).orElseThrow().voiceGuestRegistrationState()).isEqualTo(state);
+            instanceB.update(key, AivaV2Models.SessionProjection::close);
+            assertThat(instanceA.find(key).orElseThrow().voiceGuestRegistrationState()).isNull();
+        }
+    }
+
+    @Test
+    void preparedGuestBookingDraftAndCanonicalSlotReferenceSurviveRedisRoundTrip() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore instanceA = resources.store();
+            AivaV2SessionStore instanceB = resources.store();
+            String key = "VOICE|tenant-guest|provider-call-prepared";
+            var tenant = java.util.UUID.randomUUID();
+            var patient = java.util.UUID.randomUUID();
+            var provider = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate(
+                    "canonical-provider", "provider-handle", "doctor-id", "clinic-id", tenant.toString(),
+                    "clinic", "canonical-booking-reference", "Dr. Ravi Mehta", "Pediatrics", "Clinic",
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSource.CARE_PRIVATE,
+                    new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCapabilities(
+                            true, true, false, false, false, true, false));
+            var draftId = java.util.UUID.randomUUID();
+            var requestId = java.util.UUID.randomUUID();
+            var draft = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.BookingDraft(
+                    draftId, patient, tenant.toString(), provider, null, LocalDate.of(2026, 11, 5), null,
+                    LocalTime.of(16, 0), null, requestId, "canonical-slot-reference",
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.DraftStatus.PREPARED,
+                    4, NOW.plusSeconds(1800), null);
+            var availability = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityResult(
+                    requestId, draftId, 4, "criteria-fingerprint", provider.providerHandle(), provider.doctorId(),
+                    provider.clinicId(), LocalDate.of(2026, 11, 5), null, "Asia/Kolkata",
+                    List.of(new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilitySlot(
+                            "canonical-slot-reference", LocalTime.of(16, 0), LocalTime.of(16, 30), "16:00")),
+                    null, false, NOW, NOW.plusSeconds(300));
+            var guest = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoiceGuestRegistrationState(
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoiceGuestRegistrationStatus.CAPABILITY_GRANTED,
+                    tenant, patient, "provider-call-prepared", java.util.UUID.randomUUID(), NOW.plusSeconds(600), true);
+            SessionProjection prepared = session(1).withPatientId(patient).withBookingDraft(draft)
+                    .withVoiceAvailabilityResult(availability).withVoiceGuestRegistrationState(guest);
+
+            instanceA.update(key, ignored -> prepared);
+
+            SessionProjection restored = instanceB.find(key).orElseThrow();
+            assertThat(restored.activeDraft()).isEqualTo(draft);
+            assertThat(restored.activeDraft().selectedProvider().doctorId()).isEqualTo(provider.doctorId());
+            assertThat(restored.activeDraft().selectedSlotReference()).isEqualTo("canonical-slot-reference");
+            assertThat(restored.latestAvailabilityResult()).isEqualTo(availability);
+            assertThat(restored.latestAvailabilityResult().doctorId()).isEqualTo(provider.doctorId());
+            assertThat(restored.voiceGuestRegistrationState()).isEqualTo(guest);
+            instanceB.update(key, SessionProjection::close);
+            SessionProjection closed = instanceA.find(key).orElseThrow();
+            assertThat(closed.activeDraft()).isNull();
+            assertThat(closed.voiceGuestRegistrationState()).isNull();
+        }
+    }
+
+    @Test
     void concurrentCrossInstanceTurnIsReservedOnlyOnce() throws Exception {
         try (RedisResources resources = resources()) {
             AivaV2SessionStore instanceA = resources.store();
@@ -161,7 +318,9 @@ class AivaV2DistributedSessionStoreTest {
             resources.redis.opsForHash().put("aiva:v2:session:" + key, "expiresAt", Long.toString(NOW.plusSeconds(600).toEpochMilli()));
             resources.redis.opsForHash().put("aiva:v2:session:" + key, "state", "not-json");
 
-            assertThat(resources.store().find(key)).isEmpty();
+            assertThatThrownBy(() -> resources.store().find(key))
+                    .isInstanceOf(AivaV2SessionStore.SessionStoreCorruptException.class);
+            assertThat(resources.store().find("tenant-b|patient-b|valid" )).isEmpty();
         }
     }
 
@@ -194,6 +353,12 @@ class AivaV2DistributedSessionStoreTest {
     private static SessionProjection session(long version) {
         return new SessionProjection("conversation", java.util.UUID.randomUUID(), "tenant",
                 null, null, null, null, null, null, null, null, null, version, NOW.plusSeconds(1800));
+    }
+
+    private static SessionProjection sessionForTenant(String tenant, long version) {
+        return new SessionProjection("same-dotvoice-call", java.util.UUID.randomUUID(), tenant,
+                null, null, null, null, null, null, null, null, null, null, false, version, NOW.plusSeconds(1800),
+                null, null, null, null, null, null);
     }
 
     private static MessageResponse response(String text) {

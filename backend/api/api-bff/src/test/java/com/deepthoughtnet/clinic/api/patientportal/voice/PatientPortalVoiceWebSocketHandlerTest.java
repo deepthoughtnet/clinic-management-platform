@@ -368,10 +368,12 @@ class PatientPortalVoiceWebSocketHandlerTest {
         when(persistenceService.safeResumeSession(eq(tenantId), any(), eq(patientId), eq("resume-session-1"), any(), any(), eq(8)))
                 .thenReturn(new CareAiConversationSessionSnapshot(conversation, workflow, null, List.of()));
 
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(true);
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
                 new ObjectMapper(),
                 assistantService,
-                new VoiceTestProperties(),
+                properties,
                 persistenceService
         );
         SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "patient-session-3");

@@ -52,6 +52,7 @@ import org.junit.jupiter.api.Test;
 class AivaV2ActiveBookingFollowUpRegressionTest {
     private static final Instant NOW = Instant.parse("2026-09-25T00:00:00Z");
     private static final LocalDate DATE = LocalDate.of(2026, 9, 28);
+    private static final UUID TENANT_ID = UUID.fromString("f7e0e04c-16d1-4e8c-8ef8-7a8aa2bca340");
     private AiOrchestrationService orchestration;
     private AiAivaV2ConversationDecisionGateway gateway;
 
@@ -62,7 +63,7 @@ class AivaV2ActiveBookingFollowUpRegressionTest {
         when(timeZoneResolver.resolve(any())).thenReturn(ZoneId.of("Asia/Kolkata"));
         gateway = new AiAivaV2ConversationDecisionGateway(orchestration, new ObjectMapper(), timeZoneResolver,
                 Clock.fixed(NOW, ZoneOffset.UTC));
-        RequestContextHolder.set(new RequestContext(new TenantId(UUID.randomUUID()), UUID.randomUUID(),
+        RequestContextHolder.set(new RequestContext(new TenantId(TENANT_ID), UUID.randomUUID(),
                 "patient", Set.of("PATIENT"), "PATIENT", "corr-v2-follow-up"));
     }
 
@@ -82,7 +83,9 @@ class AivaV2ActiveBookingFollowUpRegressionTest {
             assertThat(decision.bookingPatch().doctorText().mode()).as(text)
                     .isEqualTo(AivaV2Models.PatchMode.SET);
             assertThat(decision.bookingPatch().doctorText().value()).as(text)
-                    .isEqualTo("Talk Akshu Kumar".equals(text) ? "Akshu Kumar" : text);
+                    // The shared gateway forwards name evidence. Voice-specific filler
+                    // cleanup belongs to DoctorNameNormalizer in the authorized adapter.
+                    .isEqualTo(text);
             assertThat(decision.provider()).as(text).isEqualTo("DETERMINISTIC");
         }
         verifyNoInteractions(orchestration);
@@ -97,7 +100,7 @@ class AivaV2ActiveBookingFollowUpRegressionTest {
         ProviderSearchResult resolved = new ProviderSearchResult(UUID.randomUUID(), ResolutionStatus.RESOLVED,
                 "provider-criteria", List.of(provider), provider, NOW, NOW.plusSeconds(300));
         when(tools.resolveBookingProvider("Doc Akshu Kumar", null, null)).thenReturn(resolved);
-        when(tools.getBookingAvailability(any())).thenAnswer(invocation -> {
+        when(tools.getBookingAvailability(any(), any())).thenAnswer(invocation -> {
             BookingDraft draft = invocation.getArgument(0);
             return ToolResult.success(availability(draft, List.of()));
         });
@@ -246,7 +249,7 @@ class AivaV2ActiveBookingFollowUpRegressionTest {
                 provider().providerHandle(), provider().doctorId(), provider().clinicId(),
                 before.latestAvailabilityResult().requestId(), third.slotReference(), DATE, third.startsAt(),
                 NOW.plusSeconds(300), "idempotency");
-        when(tools.prepareBooking(any(), eq(failed.session().latestAvailabilityResult())))
+        when(tools.prepareBooking(any(), eq(failed.session().latestAvailabilityResult()), any()))
                 .thenReturn(ToolResult.success(confirmation));
 
         var selected = kernel.handle(failed.session(), selection, "turn-select-third");
@@ -258,7 +261,7 @@ class AivaV2ActiveBookingFollowUpRegressionTest {
     }
 
     private SessionProjection providerPendingContext(LocalDate date) {
-        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), "tenant", null, null,
+        BookingDraft draft = new BookingDraft(UUID.randomUUID(), UUID.randomUUID(), TENANT_ID.toString(), null, null,
                 date, null, null, null, null, DraftStatus.COLLECTING, 1, NOW.plusSeconds(1800), null);
         return session(draft, null);
     }
@@ -317,7 +320,7 @@ class AivaV2ActiveBookingFollowUpRegressionTest {
     }
 
     private ProviderCandidate provider() {
-        return new ProviderCandidate("candidate", "provider", "doctor-akshu", "clinic", "tenant", "clinic",
+        return new ProviderCandidate("candidate", "provider", "doctor-akshu", "clinic", TENANT_ID.toString(), "clinic",
                 null, "Doc Akshu Kumar", "General Medicine", "Clinic", ProviderSource.CARE_PRIVATE,
                 new ProviderCapabilities(true, true, false, false, false, true, false));
     }

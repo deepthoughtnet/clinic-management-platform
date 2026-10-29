@@ -47,6 +47,14 @@ public final class LocaleTemporalNormalizer {
         if (iso.find()) return parsed(iso.group(), () -> LocalDate.parse(iso.group()));
         Matcher numeric = NUMERIC.matcher(raw);
         if (numeric.find()) {
+            // In spoken slot-selection context a dotted clock such as "7.30"
+            // is common ASR punctuation. Leave it for the time normalizer;
+            // otherwise it can be misread as a date (or throw for month 30).
+            if (numeric.group().contains(".") && numeric.group(3) == null) {
+                int first = Integer.parseInt(numeric.group(1));
+                int second = Integer.parseInt(numeric.group(2));
+                if (first <= 23 && second <= 59) return NormalizedUserTurn.TemporalFact.none();
+            }
             String span = numeric.group();
             return numeric(span, Integer.parseInt(numeric.group(1)), Integer.parseInt(numeric.group(2)),
                     numeric.group(3), reference);
@@ -220,13 +228,20 @@ public final class LocaleTemporalNormalizer {
             values.put(key(transliterations[index][0]), day);
             values.put(key(transliterations[index][1]), day);
         }
+        String[][] spokenWeekdays = {{"monday", "मंडे", "मन्डे"}, {"tuesday", "ट्यूसडे"},
+                {"wednesday", "वेडनेसडे", "वेडन्सडे"}, {"thursday", "थर्सडे"},
+                {"friday", "फ्राइडे"}, {"saturday", "सैटरडे"}, {"sunday", "संडे", "सन्डे"}};
+        for (String[] aliases : spokenWeekdays) {
+            DayOfWeek day = DayOfWeek.valueOf(aliases[0].toUpperCase(Locale.ROOT));
+            for (int index = 1; index < aliases.length; index++) values.put(key(aliases[index]), day);
+        }
         return Map.copyOf(values);
     }
 
     private static Integer hindiDayNumber(String value) {
         return switch (value) {
             case "एक" -> 1; case "दो" -> 2; case "तीन" -> 3; case "चार" -> 4;
-            case "पांच" -> 5; case "छह", "छः" -> 6; case "सात" -> 7;
+            case "पांच", "पाँच" -> 5; case "छह", "छः" -> 6; case "सात" -> 7;
             case "आठ" -> 8; case "नौ" -> 9; case "दस" -> 10; case "ग्यारह" -> 11;
             case "बारह" -> 12; case "तेरह" -> 13; case "चौदह" -> 14;
             case "पंद्रह", "पन्द्रह" -> 15; case "सोलह" -> 16; case "सत्रह" -> 17;

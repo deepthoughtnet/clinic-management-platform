@@ -15,7 +15,6 @@ import java.util.UUID;
 import java.util.Set;
 import java.util.Comparator;
 import java.util.stream.Collectors;
-import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -77,17 +76,14 @@ class AivaV2AppointmentLookupTool {
                             + "statusFilterPresent={} clinicFilterPresent={} nextOnly={} "
                             + "afterDoctorFilterCount={} afterDateFilterCount={} afterStatusFilterCount={} "
                             + "finalAppointmentCount={} resultStatus={} currentCareClinicPresent={} "
-                            + "authorizedCareClinicCount={} activeTenantContextPresent={} networkLookupMode={} executionClinicSource={}",
+                            + "authorizedCareClinicCount={} networkLookupMode={} executionClinicSource={}",
                     AivaV2LogRedaction.correlation(conversationId), turnId, authorized.size(), distinctClinics(merged).size(),
                     distinctClinics(merged).size(), clinicCounts(merged).values().stream().toList(), merged.size(),
                     authorized.size(), StringUtils.hasText(doctor), date != null, isStatusFilter(status),
                     StringUtils.hasText(clinic), filter.nextOnly(), afterDoctor.size(), afterDate.size(),
                     afterStatus.size(), matches.size(), matches.isEmpty()
                             ? AivaV2Models.AppointmentLookupStatus.NONE : AivaV2Models.AppointmentLookupStatus.FOUND,
-                    RequestContextHolder.get() != null && RequestContextHolder.get().tenantId() != null,
-                    distinctClinics(merged).size(),
-                    RequestContextHolder.get() != null && RequestContextHolder.get().tenantId() != null,
-                    "AUTHORIZED_CARE_NETWORK", "APPOINTMENT_RECORD");
+                    distinctClinics(merged).size(), "AUTHORIZED_CARE_NETWORK", "APPOINTMENT_RECORD");
             return AppointmentLookupResult.found(matches);
         } catch (RuntimeException ex) {
             log.info("AIVA_V2_LOOKUP_TRACE conversationIdHash={} turnId={} resultStatus=FAILED",

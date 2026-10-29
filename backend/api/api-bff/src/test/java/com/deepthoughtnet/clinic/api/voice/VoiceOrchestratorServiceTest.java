@@ -53,6 +53,32 @@ import org.springframework.mock.web.MockMultipartFile;
 class VoiceOrchestratorServiceTest {
 
     @Test
+    void alternateVoiceV2DisabledDoesNotInvokeSharedVoiceConnector() {
+        UUID tenantId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), null, "voice-patient", Set.of("PATIENT"),
+                "PATIENT", "voice-correlation"));
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.setAivaV2Enabled(false);
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService legacyAi = mock(AiOrchestrationService.class);
+        when(legacyAi.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "mock", "mock", "Please contact the clinic for booking.", null, BigDecimal.ONE,
+                List.of(), List.of(), List.of(), null, 1L, false, null, null));
+        AivaV2VoiceTurnConnector connector = mock(AivaV2VoiceTurnConnector.class);
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()), List.of(new MockVoiceTextToSpeechProvider()),
+                legacyAi, mock(AuditEventPublisher.class), properties, new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class), mock(PiperTextToSpeechProvider.class), connector);
+
+        service.processBufferedAudio("voice".getBytes(), "audio/webm", "voice.webm", null, "en-IN", null, null,
+                "voice-conversation", "client-turn-disabled", 1L);
+
+        verifyNoInteractions(connector);
+    }
+
+    @Test
     void finalizedTranscriptUsesAivaV2AndDoesNotCallLegacySemanticPath() {
         UUID tenantId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), null, "voice-patient", Set.of("PATIENT"), "PATIENT", "voice-correlation"));

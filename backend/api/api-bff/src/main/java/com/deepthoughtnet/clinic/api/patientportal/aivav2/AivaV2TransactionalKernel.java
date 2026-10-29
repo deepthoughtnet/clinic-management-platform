@@ -20,6 +20,7 @@ import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.Operation
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.PatchMode;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSearchResult;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSource;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ResolutionStatus;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.RescheduleConfirmation;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.RescheduleResolution;
@@ -99,6 +100,28 @@ class AivaV2TransactionalKernel {
         this.clock = clock;
     }
 
+    ProviderCandidate resolveVoiceBookingProvider(UUID tenantId, ProviderCandidate discovered) {
+        return adoptCanonicalBookingProvider(tenantId, discovered, "VOICE_ADOPTION", null);
+    }
+
+    ProviderSearchResult resolveVoiceProviderEvidence(UUID tenantId, String evidence) {
+        return tenantId == null ? null : tools.resolveBookingProviderForTenant(evidence, null, null, tenantId);
+    }
+
+    private ProviderCandidate adoptCanonicalBookingProvider(UUID tenantId, ProviderCandidate evidence,
+                                                              String adoptionSource, BookingDraft draft) {
+        if (tenantId == null || evidence == null) return null;
+        ProviderCandidate canonical = tools.adoptCanonicalBookingProvider(tenantId, evidence);
+        log.info("AIVA_V2_PROVIDER_ADOPTION tenantId={} doctorId={} incomingProviderSource={} canonicalProviderSource={} "
+                        + "incomingBookingReferencePresent={} canonicalBookingReferencePresent={} adoptionSource={} "
+                        + "canonicalResolutionApplied={} draftId={} draftRevision={}",
+                tenantId, canonical == null ? evidence.doctorId() : canonical.doctorId(), evidence.source(),
+                canonical == null ? null : canonical.source(), evidence.bookingReference() != null,
+                canonical != null && canonical.bookingReference() != null, adoptionSource, canonical != null,
+                draft == null ? null : draft.draftId(), draft == null ? null : draft.revision());
+        return canonical;
+    }
+
     KernelResult handle(SessionProjection original, ConversationDecision decision, String turnId) {
         AivaV2TemporalResolution temporal = AivaV2TemporalResolution.unchanged(
                 original.activeDraft() == null ? null : original.activeDraft().preferredDate(),
@@ -131,8 +154,51 @@ class AivaV2TransactionalKernel {
     KernelResult handle(SessionProjection original, ConversationDecision decision,
                         AivaV2TemporalResolution temporal, ZoneId clinicZone, String turnId,
                         boolean ambiguousTime) {
+        return handle(original, decision, temporal, clinicZone, turnId, ambiguousTime, null);
+    }
+
+    private KernelResult handle(SessionProjection original, ConversationDecision decision,
+                        AivaV2TemporalResolution temporal, ZoneId clinicZone, String turnId,
+                        boolean ambiguousTime, UUID providerTenantScope) {
+        return handle(original, decision, temporal, clinicZone, turnId, ambiguousTime, providerTenantScope, false);
+    }
+
+    private KernelResult handle(SessionProjection original, ConversationDecision decision,
+                        AivaV2TemporalResolution temporal, ZoneId clinicZone, String turnId,
+                        boolean ambiguousTime, UUID providerTenantScope, boolean voiceDaypartNarrowing) {
         Instant now = Instant.now(clock);
         SessionProjection session = original;
+        if (isUnconfirmedVoiceProviderReplacement(session, decision)) {
+            log.info("AIVA_V2_PROVIDER_SWITCH event=PROVIDER_SWITCH_GUARD_REJECTED currentProviderId={} operation={} reason=CONFIRMATION_REQUIRED",
+                    session.activeVoiceDoctor().doctorId(), decision.operation());
+            return result(session, decision, turnId, "PROVIDER_SWITCH_CONFIRMATION_REQUIRED",
+                    "A provider change needs your confirmation. Your current appointment details are unchanged.");
+        }
+        AivaV2VoiceCollectionContext.State collectionState =
+                AivaV2VoiceCollectionContext.state(session, now);
+        boolean providerEvidence = decision.bookingPatch() != null
+                && (decision.bookingPatch().doctorText().mode() == PatchMode.SET
+                || decision.bookingPatch().specialtyText().mode() == PatchMode.SET);
+        if (decision.operation() == Operation.START_BOOKING
+                && collectionState != AivaV2VoiceCollectionContext.State.NONE
+                && (collectionState != AivaV2VoiceCollectionContext.State.AWAIT_PROVIDER || !providerEvidence)) {
+            String category = switch (collectionState) {
+                case AWAIT_PROVIDER -> "NEED_PROVIDER";
+                case AWAIT_DATE -> "NEED_DATE";
+                case AWAIT_DAYPART -> "DAYPART_SELECTION";
+                case NONE -> "CLARIFICATION";
+            };
+            String response = switch (collectionState) {
+                case AWAIT_PROVIDER -> "Which doctor or specialty would you like?";
+                case AWAIT_DATE -> "What date would you prefer?";
+                case AWAIT_DAYPART -> "Please choose one of the available dayparts.";
+                case NONE -> "Please clarify your current appointment request.";
+            };
+            log.info("AIVA_V2_COLLECTION_TRACE state={} action=START_REJECTED source=KERNEL_GUARD "
+                            + "contextPreserved=true availabilityRequested=false",
+                    collectionState);
+            return result(session, decision, turnId, category, response);
+        }
         if (decision.operation() == Operation.INTRO) {
             return result(session, decision, turnId, "INTRO", "",
                     AivaStructuredResponse.of(ResponseType.INTRO, new EmptyPayload("INTRO"), List.of()));
@@ -171,6 +237,22 @@ class AivaV2TransactionalKernel {
             session = replace(session, session.activeDraft(), session.suspendedDraft(),
                     session.latestProviderResult(), session.latestAvailabilityResult(),
                     session.pendingConfirmation(), session.pendingCancellation(), null);
+        }
+        ProviderSearchResult pendingProviderSuggestion = session.latestProviderResult();
+        if (decision.confirmation() == ConfirmationPolarity.POSITIVE
+                && pendingProviderSuggestion != null
+                && pendingProviderSuggestion.status() == ResolutionStatus.SUGGESTION
+                && pendingProviderSuggestion.expiresAt() != null
+                && pendingProviderSuggestion.expiresAt().isAfter(now)
+                && pendingProviderSuggestion.candidates().size() == 1) {
+            ProviderCandidate suggested = pendingProviderSuggestion.candidates().getFirst();
+            ConversationDecision acceptSuggestion = new ConversationDecision(decision.schemaVersion(),
+                    decision.dialogAct(), Operation.RESOLVE_PROVIDER, BookingPatch.empty(),
+                    new Selection(suggested.candidateHandle(), null, null, null), decision.confirmation(),
+                    decision.topicAction(), decision.responseLanguage(), decision.confidence(), decision.provider(),
+                    decision.fallbackUsed(), decision.latencyMs(), decision.lookupFilter(),
+                    decision.unresolvedExplicitQualifierPresent());
+            return resolveProviderCandidate(session, acceptSuggestion, turnId);
         }
         if (ambiguousTime) {
             SessionProjection clarification = session.withTemporalClarification(new TemporalClarification(
@@ -216,7 +298,7 @@ class AivaV2TransactionalKernel {
                         + "targetRefinementDetected={} targetRefinementSource={} explicitNewWorkflow={} "
                         + "sourceAppointmentBound={} targetDatePresent={}",
                 AivaV2LogRedaction.correlation(session.conversationId()), turnId, incomingOperation,
-                decision.operation(), session.pendingReschedule() == null ? "NONE" : "RESCHEDULE",
+                decision.operation(), session.activeWorkflow(),
                 session.pendingReschedule() != null, targetRefinementDetected,
                 targetRefinementSource(decision, temporal),
                 explicitNewWorkflow,
@@ -305,7 +387,9 @@ class AivaV2TransactionalKernel {
 
         if (decision.topicAction() == AivaV2Models.TopicAction.SUSPEND || decision.operation() == Operation.SUSPEND_BOOKING) {
             SessionProjection updated = new SessionProjection(session.conversationId(), session.patientId(), session.tenantId(),
-                    null, session.activeDraft(), null, null, null, session.version() + 1, session.expiresAt());
+                    null, session.activeDraft(), null, null, null, session.version() + 1, session.expiresAt())
+                    .withPresentationMode(session.presentationMode())
+                    .withCompletedBookingOutcome(session.completedBookingOutcome());
             return result(updated, decision, turnId, "BOOKING_SUSPENDED", "",
                     AivaStructuredResponse.of(ResponseType.BOOKING_SUSPENDED,
                             new BookingStatePayload("SUSPENDED"), List.of()));
@@ -317,8 +401,10 @@ class AivaV2TransactionalKernel {
                                 new BookingStatePayload("NONE"), List.of()));
             }
             SessionProjection updated = new SessionProjection(session.conversationId(), session.patientId(), session.tenantId(),
-                    session.suspendedDraft(), null, null, null, null, session.version() + 1, session.expiresAt());
-            return continueFromDraft(updated, decision, turnId);
+                    session.suspendedDraft(), null, null, null, null, session.version() + 1, session.expiresAt())
+                    .withPresentationMode(session.presentationMode())
+                    .withCompletedBookingOutcome(session.completedBookingOutcome());
+            return continueFromDraft(updated, decision, turnId, voiceDaypartNarrowing);
         }
         if (decision.topicAction() == AivaV2Models.TopicAction.ABANDON || decision.operation() == Operation.ABANDON_BOOKING) {
             BookingDraft abandoned = tools.abandonBooking(session.activeDraft());
@@ -365,7 +451,7 @@ class AivaV2TransactionalKernel {
             return resolveProviderCandidate(session, decision, turnId);
         }
 
-        PatchResult patchResult = applyPatch(session, decision, temporal, clinicZone);
+        PatchResult patchResult = applyPatch(session, decision, temporal, clinicZone, providerTenantScope, turnId);
         session = patchResult.session();
         draft = session.activeDraft();
         if (patchResult.invalidDate()) {
@@ -410,11 +496,133 @@ class AivaV2TransactionalKernel {
             return result(updated, decision, turnId, "SLOT_CHOICES", slotChoices(continued));
         }
 
-        return continueFromDraft(session, decision, turnId);
+        return continueFromDraft(session, decision, turnId, voiceDaypartNarrowing);
+    }
+
+    /**
+     * Voice guest preparation entry. It deliberately cannot dispatch confirmation or any other
+     * transaction operation. Non-selection preparation reuses the normal kernel path; slot
+     * selection uses the same canonical selector/revalidation services but stops before creating
+     * a confirmation capability.
+     */
+    KernelResult prepareOnly(SessionProjection original, ConversationDecision decision,
+                             AivaV2TemporalResolution temporal, ZoneId clinicZone, String turnId,
+                             boolean ambiguousTime) {
+        Operation operation = decision.operation();
+        if (original.pendingConfirmation() != null || (original.activeDraft() != null
+                && original.activeDraft().status() == DraftStatus.READY_FOR_CONFIRMATION)) {
+            BookingDraft active = original.activeDraft();
+            BookingDraft safeDraft = active == null ? null : copyDraft(active, active.selectedProvider(),
+                    active.specialtyFilter(), active.preferredDate(), active.preferredTimeWindow(), active.exactTime(),
+                    active.availabilityTimeConstraint(), active.latestAvailabilityRequestId(),
+                    active.selectedSlotReference(), DraftStatus.PREPARED, active.revision(), null);
+            SessionProjection safe = replace(original, safeDraft, original.suspendedDraft(),
+                    original.latestProviderResult(), original.latestAvailabilityResult(), null);
+            if (operation == Operation.CONFIRM_BOOKING || decision.confirmation() == ConfirmationPolarity.POSITIVE) {
+                return result(safe, decision, turnId, "TRANSACTION_EXECUTION_DISABLED",
+                        "Booking confirmation is not enabled for Voice. No appointment was created.");
+            }
+            original = safe;
+        }
+        if (operation == Operation.CONFIRM_BOOKING || decision.confirmation() == ConfirmationPolarity.POSITIVE) {
+            return result(original, decision, turnId, "TRANSACTION_EXECUTION_DISABLED",
+                    "Booking confirmation is not enabled for Voice. No appointment was created.");
+        }
+        boolean preparationOperation = operation == Operation.START_BOOKING
+                || operation == Operation.UPDATE_BOOKING || operation == Operation.RESOLVE_PROVIDER
+                || operation == Operation.GET_AVAILABILITY || operation == Operation.FIND_NEXT_AVAILABLE_SLOT
+                || operation == Operation.SELECT_SLOT
+                || operation == Operation.SHOW_MORE_SLOTS || operation == Operation.PREPARE_BOOKING;
+        if (!preparationOperation || decision.topicAction() != AivaV2Models.TopicAction.CONTINUE) {
+            return result(original, decision, turnId, "GUEST_PREPARATION_DENIED",
+                    "This request is outside the Voice booking-preparation flow.");
+        }
+        if (ambiguousTime) {
+            return result(original, decision, turnId, "TEMPORAL_TIME_AMBIGUOUS",
+                    "Please clarify the appointment time.");
+        }
+        if (operation == Operation.SELECT_SLOT) return selectForPreparation(original, decision, turnId);
+
+        UUID trustedTenant = tenantScope(original.tenantId());
+        KernelResult prepared = handle(original, decision, temporal, clinicZone, turnId, false, trustedTenant, true);
+        BookingDraft draft = prepared.session().activeDraft();
+        AvailabilityResult available = prepared.session().latestAvailabilityResult();
+        boolean exactConstraint = draft != null && (draft.exactTime() != null
+                || draft.availabilityTimeConstraint() != null
+                && draft.availabilityTimeConstraint().mode() == AvailabilityTimeConstraintMode.EXACT);
+        if (exactConstraint && draft.selectedSlotReference() == null && available != null
+                && available.slots().size() == 1) {
+            ConversationDecision exactSelection = withSelection(decision,
+                    new Selection(null, null, null, available.slots().getFirst().startsAt().toString()));
+            return selectForPreparation(prepared.session(), exactSelection, turnId);
+        }
+        if (draft == null || draft.selectedSlotReference() == null) return prepared;
+
+        AvailabilityResult availability = prepared.session().latestAvailabilityResult();
+        ToolResult<AivaV2BookingTools.RevalidatedBookingSlot> validated = tools.revalidateBookingSlot(
+                draft, availability, tenantScope(prepared.session().tenantId()));
+        if (!"SUCCESS".equals(validated.category())) {
+            return result(prepared.session(), decision, turnId, validated.category(),
+                    safe(validated.safeReason(), "That slot is no longer available."));
+        }
+        AvailabilityResult refreshed = validated.value().availability();
+        BookingDraft ready = copyDraft(draft, draft.selectedProvider(), draft.specialtyFilter(), draft.preferredDate(),
+                draft.preferredTimeWindow(), validated.value().slot().startsAt(), refreshed.requestId(),
+                validated.value().slot().slotReference(), DraftStatus.PREPARED, draft.revision(), null);
+        SessionProjection updated = replace(prepared.session(), ready, null, prepared.session().latestProviderResult(),
+                refreshed, null);
+        return result(updated, decision, turnId, "BOOKING_DRAFT_PREPARED",
+                prepared.response().assistantMessage());
+    }
+
+    private UUID tenantScope(String tenantId) {
+        if (!StringUtils.hasText(tenantId)) return null;
+        try { return UUID.fromString(tenantId); }
+        catch (IllegalArgumentException ignored) { return null; }
+    }
+
+    private KernelResult selectForPreparation(SessionProjection session, ConversationDecision decision, String turnId) {
+        BookingDraft draft = session.activeDraft();
+        AvailabilityResult availability = session.latestAvailabilityResult();
+        if (draft == null || !availabilityIsCurrent(draft, availability)) {
+            return result(session, decision, turnId, "STALE", "Those slots are no longer current. I will check again.");
+        }
+        ToolResult<AvailabilitySlot> selectedResult = tools.selectBookingSlot(draft, availability, decision.selection());
+        if (!"SUCCESS".equals(selectedResult.category())) {
+            return result(session, decision, turnId, selectedResult.category(),
+                    safe(selectedResult.safeReason(), "Please select one of the current slots."));
+        }
+        AvailabilitySlot selectedSlot = selectedResult.value();
+        BookingDraft selected = copyDraft(draft, draft.selectedProvider(), draft.specialtyFilter(), draft.preferredDate(),
+                draft.preferredTimeWindow(), selectedSlot.startsAt(), availability.requestId(),
+                selectedSlot.slotReference(), DraftStatus.COLLECTING, draft.revision(), null);
+        ToolResult<AivaV2BookingTools.RevalidatedBookingSlot> validated = tools.revalidateBookingSlot(
+                selected, availability, tenantScope(session.tenantId()));
+        if (!"SUCCESS".equals(validated.category())) {
+            return result(session, decision, turnId, validated.category(),
+                    safe(validated.safeReason(), "That slot is no longer available."));
+        }
+        AvailabilityResult refreshed = validated.value().availability();
+        BookingDraft prepared = copyDraft(selected, selected.selectedProvider(), selected.specialtyFilter(),
+                selected.preferredDate(), selected.preferredTimeWindow(), validated.value().slot().startsAt(),
+                refreshed.requestId(), validated.value().slot().slotReference(), DraftStatus.PREPARED,
+                selected.revision(), null);
+        SessionProjection updated = replace(session, prepared, session.suspendedDraft(),
+                session.latestProviderResult(), refreshed, null);
+        return result(updated, decision, turnId, "BOOKING_DRAFT_PREPARED",
+                "The selected appointment time is available. Booking is not enabled for Voice.");
+    }
+
+    private ConversationDecision withSelection(ConversationDecision decision, Selection selection) {
+        return new ConversationDecision(decision.schemaVersion(), decision.dialogAct(), Operation.SELECT_SLOT,
+                decision.bookingPatch(), selection, ConfirmationPolarity.NONE, AivaV2Models.TopicAction.CONTINUE,
+                decision.responseLanguage(), decision.confidence(), decision.provider(), decision.fallbackUsed(),
+                decision.latencyMs(), decision.lookupFilter(), decision.unresolvedExplicitQualifierPresent());
     }
 
     private PatchResult applyPatch(SessionProjection session, ConversationDecision decision,
-                                   AivaV2TemporalResolution temporal, ZoneId clinicZone) {
+                                   AivaV2TemporalResolution temporal, ZoneId clinicZone,
+                                   UUID providerTenantScope, String turnId) {
         BookingDraft draft = session.activeDraft();
         if (draft == null) return new PatchResult(session, null, false, false);
         var patch = decision.bookingPatch();
@@ -481,31 +689,53 @@ class AivaV2TransactionalKernel {
                 criteriaChanged ? null : draft.selectedSlotReference(),
                 criteriaChanged ? DraftStatus.COLLECTING : draft.status(), revision,
                 criteriaChanged ? null : draft.confirmedAppointmentReference());
-        session = criteriaChanged ? replace(session, changed, null, null, null, null) : withActiveDraft(session, changed);
+        BookingDraft retainedAbandonedDraft = isConfirmedProviderSwitchDecision(decision)
+                ? session.suspendedDraft() : null;
+        session = criteriaChanged ? replace(session, changed, retainedAbandonedDraft, null, null, null)
+                : withActiveDraft(session, changed);
 
         ProviderSearchResult providerResult = null;
         if (providerTargeted) {
             String doctorText = patch.doctorText().mode() == PatchMode.SET ? patch.doctorText().value() : null;
             String clinicText = patch.clinicText().mode() == PatchMode.SET ? patch.clinicText().value() : null;
-            providerResult = tools.resolveBookingProvider(doctorText, specialty, clinicText);
-            session = replace(session, session.activeDraft(), null, providerResult, null, null);
+            providerResult = providerTenantScope == null
+                    ? tools.resolveBookingProvider(doctorText, specialty, clinicText)
+                    : tools.resolveBookingProviderForTenant(doctorText, specialty, clinicText, providerTenantScope);
+            providerResult = providerResult.fromTurn(turnId);
+            session = replace(session, session.activeDraft(), retainedAbandonedDraft, providerResult, null, null);
             if (providerResult.status() == ResolutionStatus.RESOLVED) {
-                BookingDraft resolved = copyDraft(session.activeDraft(), providerResult.resolvedProvider(), specialty, date,
+                ProviderCandidate canonical = adoptCanonicalBookingProvider(providerTenantScope,
+                        providerResult.resolvedProvider(), "EXPLICIT_PROVIDER", session.activeDraft());
+                if (canonical == null) {
+                    providerResult = new ProviderSearchResult(providerResult.resultId(), ResolutionStatus.NOT_FOUND,
+                            providerResult.criteriaFingerprint(), List.of(), null, providerResult.generatedAt(),
+                            providerResult.expiresAt(), providerResult.originatingTurnId());
+                    session = replace(session, session.activeDraft(), retainedAbandonedDraft, providerResult, null, null);
+                    return new PatchResult(session, providerResult, invalidDate, pastDate);
+                }
+                BookingDraft resolved = copyDraft(session.activeDraft(), canonical, specialty, date,
                         window, exact, constraint, null, null, DraftStatus.COLLECTING,
                         session.activeDraft().revision(), null);
-                session = withActiveDraft(session, resolved);
+                session = withActiveDraft(session, resolved)
+                        .withActiveVoiceDoctor(canonical);
             }
         }
         return new PatchResult(session, providerResult, invalidDate, pastDate);
     }
 
     private KernelResult continueFromDraft(SessionProjection session, ConversationDecision decision, String turnId) {
+        return continueFromDraft(session, decision, turnId, false);
+    }
+
+    private KernelResult continueFromDraft(SessionProjection session, ConversationDecision decision, String turnId,
+                                           boolean voiceDaypartNarrowing) {
         BookingDraft draft = session.activeDraft();
         if (draft == null) return result(session, decision, turnId, "CLARIFICATION", "How can I help with an appointment?");
         if (draft.selectedProvider() == null) {
             return result(session, decision, turnId, "NEED_PROVIDER", "Which doctor or specialty would you like?");
         }
-        if (draft.selectedProvider().capabilities().callToBook()) {
+        if (draft.selectedProvider().capabilities() != null
+                && draft.selectedProvider().capabilities().callToBook()) {
             return result(session, decision, turnId, "CALL_TO_BOOK", "Online scheduling is not connected for "
                     + draft.selectedProvider().displayName() + ". Please contact the clinic directly.");
         }
@@ -515,7 +745,7 @@ class AivaV2TransactionalKernel {
         if (draft.selectedSlotReference() != null && session.pendingConfirmation() != null) {
             return result(session, decision, turnId, "CONFIRMATION_REQUIRED", confirmationPrompt(draft, session.pendingConfirmation()));
         }
-        ToolResult<AvailabilityResult> availability = tools.getBookingAvailability(draft);
+        ToolResult<AvailabilityResult> availability = tools.getBookingAvailability(draft, tenantScope(session.tenantId()));
         if (!"SUCCESS".equals(availability.category())) {
             return result(session, decision, turnId, availability.category(), safe(availability.safeReason(), "Availability could not be checked."));
         }
@@ -523,9 +753,28 @@ class AivaV2TransactionalKernel {
         BookingDraft updatedDraft = copyDraft(draft, draft.selectedProvider(), draft.specialtyFilter(), draft.preferredDate(),
                 draft.preferredTimeWindow(), draft.exactTime(), value.requestId(), null,
                 DraftStatus.COLLECTING, draft.revision(), null);
-        SessionProjection updated = replace(session, updatedDraft, null, session.latestProviderResult(), value, null);
+        SessionProjection updated = replace(session, updatedDraft,
+                isConfirmedProviderSwitchDecision(decision) ? session.suspendedDraft() : null,
+                session.latestProviderResult(), value, null);
         if (value.slots().isEmpty()) {
             return result(updated, decision, turnId, "NO_AVAILABILITY", noAvailabilityMessage(updatedDraft));
+        }
+        if (voiceDaypartNarrowing && updatedDraft.preferredTimeWindow() == null && updatedDraft.exactTime() == null
+                && updatedDraft.availabilityTimeConstraint() == null) {
+            List<NormalizedUserTurn.Daypart> availableDayparts = value.slots().stream()
+                    .filter(slot -> slot.startsAt() != null)
+                    .map(slot -> slot.startsAt().isBefore(LocalTime.NOON)
+                            ? NormalizedUserTurn.Daypart.MORNING
+                            : slot.startsAt().isBefore(LocalTime.of(17, 0))
+                            ? NormalizedUserTurn.Daypart.AFTERNOON : NormalizedUserTurn.Daypart.EVENING)
+                    .distinct().toList();
+            if (availableDayparts.size() > 1) {
+                AvailabilityResult pendingDaypart = withCursor(value, "AIVA_BOOKING_PENDING_DAYPART");
+                SessionProjection awaiting = replace(updated, updated.activeDraft(), updated.suspendedDraft(),
+                        updated.latestProviderResult(), pendingDaypart, updated.pendingConfirmation());
+                return result(awaiting, decision, turnId, "DAYPART_SELECTION",
+                        "Please choose a daypart before I list appointment times.");
+            }
         }
         return result(updated, decision, turnId, "SLOT_CHOICES", slotChoices(value));
     }
@@ -599,7 +848,7 @@ class AivaV2TransactionalKernel {
                 || session.latestAvailabilityResult() == null) {
             return result(session, decision, turnId, "CLARIFICATION", "Please provide a doctor and date first.");
         }
-        ToolResult<AvailabilityResult> next = tools.getNextBookingAvailability(draft);
+        ToolResult<AvailabilityResult> next = tools.getNextBookingAvailability(draft, tenantScope(session.tenantId()));
         if (!"SUCCESS".equals(next.category())) {
             if ("NO_FUTURE_AVAILABILITY".equals(next.category())) {
                 SessionProjection cleared = replace(session, draft, null, session.latestProviderResult(), null, null);
@@ -1116,6 +1365,12 @@ class AivaV2TransactionalKernel {
         BookingDraft draft = session.activeDraft();
         if (availability == null && session.latestProviderResult() != null) {
             ProviderCandidate selected = selectProvider(session.latestProviderResult(), selection);
+            if (isDifferentActiveVoiceProvider(session, selected)) {
+                return result(session, decision, turnId, "PROVIDER_SWITCH_CONFIRMATION_REQUIRED",
+                        "A provider change needs your confirmation. Your current appointment details are unchanged.");
+            }
+            selected = adoptCanonicalBookingProvider(tenantScope(session.tenantId()), selected,
+                    "PROVIDER_CHOICE", draft);
             if (selected == null) return result(session, decision, turnId, "CLARIFICATION", "Please select one of the current doctors.");
             BookingDraft changed = copyDraft(draft, selected, draft.specialtyFilter(), draft.preferredDate(),
                     draft.preferredTimeWindow(), draft.exactTime(), null, null, DraftStatus.COLLECTING,
@@ -1136,7 +1391,8 @@ class AivaV2TransactionalKernel {
         BookingDraft selected = copyDraft(draft, draft.selectedProvider(), draft.specialtyFilter(), draft.preferredDate(),
                 draft.preferredTimeWindow(), slot.startsAt(), availability.requestId(), slot.slotReference(),
                 DraftStatus.COLLECTING, draft.revision(), null);
-        ToolResult<BookingConfirmation> prepared = tools.prepareBooking(selected, availability);
+        ToolResult<BookingConfirmation> prepared = tools.prepareBooking(selected, availability,
+                tenantScope(session.tenantId()));
         if (!"SUCCESS".equals(prepared.category())) {
             return result(replace(session, selected, null, session.latestProviderResult(), availability, null), decision,
                     turnId, prepared.category(), safe(prepared.safeReason(), "That slot is no longer available."));
@@ -1243,10 +1499,19 @@ class AivaV2TransactionalKernel {
         if (selected == null) {
             return result(session, decision, turnId, "PROVIDER_CHOICES", providerChoices(result));
         }
+        if (isDifferentActiveVoiceProvider(session, selected)) {
+            return result(session, decision, turnId, "PROVIDER_SWITCH_CONFIRMATION_REQUIRED",
+                    "A provider change needs your confirmation. Your current appointment details are unchanged.");
+        }
+        selected = adoptCanonicalBookingProvider(tenantScope(session.tenantId()), selected,
+                "PROVIDER_CHOICE", draft);
+        if (selected == null) return result(session, decision, turnId, "PROVIDER_NOT_FOUND",
+                "I could not verify that doctor for this clinic.");
         BookingDraft changed = copyDraft(draft, selected, draft.specialtyFilter(), draft.preferredDate(),
                 draft.preferredTimeWindow(), draft.exactTime(), draft.availabilityTimeConstraint(), null, null,
                 DraftStatus.COLLECTING, draft.revision() + 1, null);
-        SessionProjection updated = replace(session, changed, null, null, null, null);
+        SessionProjection updated = replace(session, changed, null, null, null, null)
+                .withActiveVoiceDoctor(selected);
         return continueFromDraft(updated, decision, turnId);
     }
 
@@ -1255,6 +1520,25 @@ class AivaV2TransactionalKernel {
                 && result.draftRevision() == draft.revision()
                 && result.requestId().equals(draft.latestAvailabilityRequestId())
                 && result.criteriaFingerprint().equals(tools.criteriaFingerprint(draft));
+    }
+
+    private boolean isUnconfirmedVoiceProviderReplacement(SessionProjection session,
+            ConversationDecision decision) {
+        if (session == null || session.activeVoiceDoctor() == null || decision == null) return false;
+        ValuePatch providerPatch = decision.bookingPatch() == null ? null : decision.bookingPatch().doctorText();
+        if (providerPatch == null || providerPatch.mode() != PatchMode.SET
+                || !StringUtils.hasText(providerPatch.value())) return false;
+        return !com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DoctorNameNormalizer
+                .matches(session.activeVoiceDoctor().displayName(), providerPatch.value());
+    }
+
+    private boolean isDifferentActiveVoiceProvider(SessionProjection session, ProviderCandidate proposed) {
+        return session != null && session.activeVoiceDoctor() != null && proposed != null
+                && !session.activeVoiceDoctor().doctorId().equals(proposed.doctorId());
+    }
+
+    private boolean isConfirmedProviderSwitchDecision(ConversationDecision decision) {
+        return decision != null && "CONFIRMED_PROVIDER_SWITCH_CANONICAL_ADOPTION".equals(decision.provider());
     }
 
     private boolean requiresDraft(ConversationDecision decision) {
@@ -1279,6 +1563,14 @@ class AivaV2TransactionalKernel {
                 result.date(), result.timeWindow(), result.availabilityTimeConstraint(), result.timezone(), result.slots(), result.cursor(),
                 offset + result.pageSize() < result.slots().size(), result.generatedAt(), result.expiresAt(),
                 offset, result.pageSize());
+    }
+
+    private AvailabilityResult withCursor(AvailabilityResult result, String cursor) {
+        return new AvailabilityResult(result.requestId(), result.draftId(), result.draftRevision(),
+                result.criteriaFingerprint(), result.providerHandle(), result.doctorId(), result.clinicId(),
+                result.date(), result.timeWindow(), result.availabilityTimeConstraint(), result.timezone(),
+                result.slots(), cursor, result.hasMore(), result.generatedAt(), result.expiresAt(),
+                result.displayOffset(), result.pageSize());
     }
 
     private String slotChoices(AvailabilityResult result) {
@@ -1344,9 +1636,13 @@ class AivaV2TransactionalKernel {
 
     private KernelResult result(SessionProjection session, ConversationDecision decision, String turnId,
                                 String category, String message, AivaStructuredResponse structured) {
-        log.info("AIVA_V2_TRACE conversationIdHash={} turnId={} provider={} fallbackUsed={} dialogAct={} operation={} category={} "
+        log.info("AIVA_V2_TRACE tenantId={} providerCallId={} conversationIdHash={} turnId={} turnNumber={} activeWorkflow={} "
+                        + "provider={} fallbackUsed={} dialogAct={} operation={} category={} "
                         + "draftRevision={} draftStatus={} providerResolved={} datePresent={} slotSelected={} confirmationPending={}",
-                AivaV2LogRedaction.correlation(session.conversationId()), turnId, decision.provider(), decision.fallbackUsed(), decision.dialogAct(), decision.operation(), category,
+                session.tenantId(), org.slf4j.MDC.get(AivaV2VoiceFlowTrace.CALL_ID),
+                AivaV2LogRedaction.correlation(session.conversationId()), turnId,
+                AivaV2VoiceFlowTrace.turnNumber(), session.activeWorkflow(), decision.provider(),
+                decision.fallbackUsed(), decision.dialogAct(), decision.operation(), category,
                 session.activeDraft() == null ? null : session.activeDraft().revision(),
                 session.activeDraft() == null ? null : session.activeDraft().status(),
                 session.activeDraft() != null && session.activeDraft().selectedProvider() != null,
@@ -1676,7 +1972,9 @@ class AivaV2TransactionalKernel {
         return new SessionProjection(session.conversationId(), session.patientId(), session.tenantId(), active, suspended,
                 providerResult, availability, confirmation, cancellation, resolution,
                 reschedule, rescheduleConfirmation, session.pendingTemporalClarification(),
-                session.closed(), session.version() + 1, session.expiresAt(), session.activeAppointmentReferent());
+                session.closed(), session.version() + 1, session.expiresAt(), session.activeAppointmentReferent(),
+                session.activeVoiceDoctor(), session.voiceClarificationState(), session.voiceAuthenticationState(),
+                session.voiceGuestRegistrationState(), session.presentationMode(), session.completedBookingOutcome());
     }
 
     private boolean isExplicitNewWorkflow(ConversationDecision decision) {

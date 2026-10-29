@@ -29,6 +29,9 @@ public interface DotVoiceMediaStreamClient {
         return play(providerCallId, mediaFrames).success();
     }
 
+    /** Releases an inbound caller back to listening when playback preparation fails before send. */
+    default void onPlaybackPreparationFailed(String providerCallId) { }
+
     /** Requests a bot-initiated hangup for a live provider call. */
     default boolean hangup(String providerCallId) { return false; }
 

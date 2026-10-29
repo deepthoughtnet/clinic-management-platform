@@ -19,6 +19,16 @@ class ReminderAudioNormalizerTest {
     }
 
     @Test
+    void normalizesSarvamLinear16WithoutMp3Decoding() {
+        byte[] linear16 = new byte[320];
+        var normalized = ReminderAudioNormalizer.normalize(linear16, "audio/L16", 16_000);
+        assertThat(normalized.inputFormat()).isEqualTo("PCM16");
+        assertThat(normalized.sampleRate()).isEqualTo(16_000);
+        assertThat(normalized.channels()).isEqualTo(1);
+        assertThat(normalized.bytes()).isEqualTo(linear16);
+    }
+
+    @Test
     void normalizesExistingPcmWav() {
         var normalized = ReminderAudioNormalizer.normalize(pcmWav(16_000, 1, 160), "audio/wav", 0);
         assertThat(normalized.inputFormat()).isEqualTo("WAV/PCM16");

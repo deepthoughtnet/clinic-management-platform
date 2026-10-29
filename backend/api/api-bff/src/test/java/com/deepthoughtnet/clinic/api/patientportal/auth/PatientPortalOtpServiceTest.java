@@ -17,6 +17,12 @@ import com.deepthoughtnet.clinic.identity.db.TenantRepository;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
+import com.deepthoughtnet.clinic.carepilot.messaging.resolver.MessagingProviderRegistry;
+import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
+import com.deepthoughtnet.clinic.messaging.spi.MessageDeliveryStatus;
+import com.deepthoughtnet.clinic.messaging.spi.MessageProvider;
+import com.deepthoughtnet.clinic.messaging.spi.MessageRequest;
+import com.deepthoughtnet.clinic.messaging.spi.MessageResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Field;
 import java.time.LocalDate;
@@ -24,6 +30,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -42,6 +49,8 @@ class PatientPortalOtpServiceTest {
     private PatientPortalOtpChallengeRepository challengeRepository;
     private PatientPortalSessionTokenService sessionTokenService;
     private PatientPortalAuthProperties properties;
+    private MessagingProviderRegistry messagingProviderRegistry;
+    private MessageProvider smsProvider;
     private PatientPortalOtpService service;
 
     @BeforeEach
@@ -52,6 +61,8 @@ class PatientPortalOtpServiceTest {
         appUserRepository = mock(AppUserRepository.class);
         challengeRepository = mock(PatientPortalOtpChallengeRepository.class);
         properties = new PatientPortalAuthProperties();
+        messagingProviderRegistry = mock(MessagingProviderRegistry.class);
+        smsProvider = mock(MessageProvider.class);
         properties.setExposeDevOtp(true);
         properties.setSessionSecret("test-patient-portal-secret");
         sessionTokenService = new PatientPortalSessionTokenService(properties, new ObjectMapper());
@@ -62,13 +73,23 @@ class PatientPortalOtpServiceTest {
                 appUserRepository,
                 challengeRepository,
                 sessionTokenService,
-                properties
+                properties, messagingProviderRegistry
         );
+        when(messagingProviderRegistry.resolve(MessageChannel.SMS)).thenReturn(smsProvider);
+        when(smsProvider.providerName()).thenReturn("test-sms");
+        when(smsProvider.send(any(MessageRequest.class))).thenReturn(new MessageResult(true,
+                MessageDeliveryStatus.SENT, "test-sms", "message-id", null, null, OffsetDateTime.now()));
         when(tenantRepository.findByCode("tenant-a")).thenReturn(Optional.of(tenant("tenant-a", TENANT_A_ID)));
         when(tenantRepository.findByCode("tenant-b")).thenReturn(Optional.of(tenant("tenant-b", TENANT_B_ID)));
         when(tenantRepository.findByCode("demo-clinic")).thenReturn(Optional.of(tenant("demo-clinic", TENANT_B_ID)));
         when(challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(any(), any()))
                 .thenReturn(Optional.empty());
+        when(challengeRepository.findTopByPhoneNormalizedAndChannelIsNullOrderByCreatedAtDesc(any()))
+                .thenAnswer(invocation -> challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc(
+                        invocation.getArgument(0)));
+        when(challengeRepository.findTopByTenantIdAndPhoneNormalizedAndChannelIsNullOrderByCreatedAtDesc(any(), any()))
+                .thenAnswer(invocation -> challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(
+                        invocation.getArgument(0), invocation.getArgument(1)));
         when(challengeRepository.save(any(PatientPortalOtpChallengeEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -97,6 +118,23 @@ class PatientPortalOtpServiceTest {
 
         assertThat(hiddenResponse.accepted()).isTrue();
         assertThat(hiddenResponse.devOtp()).isNull();
+    }
+
+    @Test
+    void priorVoiceOtpEvidenceRequiresCurrentTenantPatientAndRegisteredPhoneBinding() {
+        PatientEntity patient = patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210", OffsetDateTime.now());
+        when(patientRepository.findById(PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(challengeRepository.existsByTenantIdAndIdentifiedPatientIdAndPhoneNormalizedAndChannelAndVerifiedAtIsNotNull(
+                TENANT_A_ID, PATIENT_ID, "919876543210", "VOICE")).thenReturn(true);
+
+        assertThat(service.hasPreviouslyVerifiedVoicePhoneBinding(TENANT_A_ID, PATIENT_ID, "+91 98765 43210"))
+                .isTrue();
+        assertThat(service.hasPreviouslyVerifiedVoicePhoneBinding(TENANT_B_ID, PATIENT_ID, "+91 98765 43210"))
+                .isFalse();
+        assertThat(service.hasPreviouslyVerifiedVoicePhoneBinding(TENANT_A_ID, PATIENT_ID, "+91 90000 00000"))
+                .isFalse();
+        verify(challengeRepository).existsByTenantIdAndIdentifiedPatientIdAndPhoneNormalizedAndChannelAndVerifiedAtIsNotNull(
+                TENANT_A_ID, PATIENT_ID, "919876543210", "VOICE");
     }
 
     @Test
@@ -353,6 +391,125 @@ class PatientPortalOtpServiceTest {
         assertThat(response.tenantCode()).isEqualTo("tenant-a");
         assertThat(response.patientDisplayName()).isEqualTo("Riya Sharma");
         assertThat(response.patientSessionToken()).isNotBlank();
+    }
+
+    @Test
+    void voiceChallengeIsSentThroughMessagingAndExactCallBoundChallengeVerifiesWithoutPortalToken() {
+        properties.setMode(PatientPortalAuthProperties.Mode.OTP);
+        PatientEntity patient = patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210");
+        when(patientRepository.findById(PATIENT_ID)).thenReturn(Optional.of(patient));
+        var started = service.startVoiceChallenge(TENANT_A_ID, PATIENT_ID, "+91 98765 43210", "call-A", UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+
+        assertThat(started.sent()).isTrue();
+        assertThat(started.challengeId()).isNotNull();
+        ArgumentCaptor<MessageRequest> request = ArgumentCaptor.forClass(MessageRequest.class);
+        verify(smsProvider).send(request.capture());
+        assertThat(request.getValue().channel()).isEqualTo(MessageChannel.SMS);
+        assertThat(request.getValue().body()).containsPattern("\\d{6}");
+        ArgumentCaptor<PatientPortalOtpChallengeEntity> challengeCaptor = ArgumentCaptor.forClass(PatientPortalOtpChallengeEntity.class);
+        verify(challengeRepository).save(challengeCaptor.capture());
+        PatientPortalOtpChallengeEntity challenge = challengeCaptor.getValue();
+        assertThat(challenge.getId()).isEqualTo(started.challengeId());
+        assertThat(challenge.getChannel()).isEqualTo("VOICE");
+        assertThat(challenge.getProviderCallId()).isEqualTo("call-A");
+        assertThat(challenge.getIdentifiedPatientId()).isEqualTo(PATIENT_ID);
+
+        String otp = request.getValue().body().replaceAll(".*?(\\d{6}).*", "$1");
+        when(challengeRepository.findById(started.challengeId())).thenReturn(Optional.of(challenge));
+        var portalVerification = service.verifyOtp("+91 98765 43210", otp,
+                new com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalOtpContext(
+                        null, "tenant-a", null, null, null));
+        assertThat(portalVerification.verified()).isFalse();
+        assertThat(service.verifyVoiceChallenge(started.challengeId(), TENANT_A_ID, PATIENT_ID,
+                "9876543210", "call-B", UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), otp).verified()).isFalse();
+
+        when(appUserProvisioner.upsertAndReturnId(eq(TENANT_A_ID), any(), eq(null), any())).thenReturn(APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_A_ID, APP_USER_ID)).thenReturn(Optional.empty());
+        var verified = service.verifyVoiceChallenge(started.challengeId(), TENANT_A_ID, PATIENT_ID,
+                "+91 98765 43210", "call-A", UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), otp);
+        assertThat(verified.verified()).isTrue();
+        assertThat(verified.authenticatedPatientId()).isEqualTo(PATIENT_ID);
+        assertThat(verified.appUserId()).isEqualTo(APP_USER_ID);
+        assertThat(verified.expiresAt()).isNotNull();
+        verify(challengeRepository, never()).findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(
+                eq(TENANT_A_ID), eq("9876543210"));
+    }
+
+    @Test
+    void voiceChallengeRejectsMockSmsDeliveryProvider() {
+        properties.setMode(PatientPortalAuthProperties.Mode.OTP);
+        PatientEntity patient = patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210");
+        when(patientRepository.findById(PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(smsProvider.providerName()).thenReturn("mock");
+
+        var started = service.startVoiceChallenge(TENANT_A_ID, PATIENT_ID, "9876543210", "call-A", null);
+
+        assertThat(started.sent()).isFalse();
+        assertThat(started.status()).isEqualTo("DELIVERY_UNAVAILABLE");
+        verify(smsProvider, never()).send(any(MessageRequest.class));
+    }
+
+    @Test
+    void voiceVerificationReusesAttemptAndExpiryRulesWithoutGrantingOnFailure() {
+        properties.setMode(PatientPortalAuthProperties.Mode.OTP);
+        when(patientRepository.findById(PATIENT_ID)).thenReturn(Optional.of(
+                patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210")));
+        UUID interactionId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        PatientPortalOtpChallengeEntity wrongCodeChallenge = PatientPortalOtpChallengeEntity.createVoice(
+                TENANT_A_ID, PATIENT_ID, "919876543210", new BCryptPasswordEncoder().encode("123456"),
+                OffsetDateTime.now().plusMinutes(5), "call-A", interactionId);
+        when(challengeRepository.findById(wrongCodeChallenge.getId())).thenReturn(Optional.of(wrongCodeChallenge));
+
+        var wrong = service.verifyVoiceChallenge(wrongCodeChallenge.getId(), TENANT_A_ID, PATIENT_ID,
+                "+91 98765 43210", "call-A", interactionId, "000000");
+        assertThat(wrong.verified()).isFalse();
+        assertThat(wrong.status()).isEqualTo("FAILED");
+        assertThat(wrongCodeChallenge.getAttempts()).isEqualTo(1);
+        assertThat(wrong.authenticatedPatientId()).isNull();
+
+        PatientPortalOtpChallengeEntity expiredChallenge = PatientPortalOtpChallengeEntity.createVoice(
+                TENANT_A_ID, PATIENT_ID, "919876543210", new BCryptPasswordEncoder().encode("123456"),
+                OffsetDateTime.now().minusSeconds(1), "call-A", interactionId);
+        when(challengeRepository.findById(expiredChallenge.getId())).thenReturn(Optional.of(expiredChallenge));
+        var expired = service.verifyVoiceChallenge(expiredChallenge.getId(), TENANT_A_ID, PATIENT_ID,
+                "+91 98765 43210", "call-A", interactionId, "123456");
+        assertThat(expired.verified()).isFalse();
+        assertThat(expired.status()).isEqualTo("EXPIRED");
+        assertThat(expired.authenticatedPatientId()).isNull();
+    }
+
+    @Test
+    void voiceSmsFailureDeletesChallengeAndDoesNotReportSent() {
+        properties.setMode(PatientPortalAuthProperties.Mode.OTP);
+        when(patientRepository.findById(PATIENT_ID)).thenReturn(Optional.of(
+                patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210")));
+        when(smsProvider.send(any(MessageRequest.class))).thenReturn(new MessageResult(false,
+                MessageDeliveryStatus.FAILED, "test-sms", null, "PROVIDER_ERROR", "delivery failed", null));
+
+        var started = service.startVoiceChallenge(TENANT_A_ID, PATIENT_ID, "9876543210", "call-A", null);
+
+        assertThat(started.sent()).isFalse();
+        assertThat(started.status()).isEqualTo("DELIVERY_FAILED");
+        ArgumentCaptor<PatientPortalOtpChallengeEntity> saved = ArgumentCaptor.forClass(PatientPortalOtpChallengeEntity.class);
+        verify(challengeRepository).save(saved.capture());
+        verify(challengeRepository).delete(saved.getValue());
+        assertThat(java.util.regex.Pattern.compile("\\b\\d{6}\\b").matcher(started.toString()).find()).isFalse();
+    }
+
+    @Test
+    void voiceChallengeRejectsTenantAndPatientBindingMismatch() {
+        PatientPortalOtpChallengeEntity challenge = PatientPortalOtpChallengeEntity.createVoice(
+                TENANT_A_ID, PATIENT_ID, "9876543210", new BCryptPasswordEncoder().encode("123456"),
+                OffsetDateTime.now().plusMinutes(5), "call-A", UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
+        when(challengeRepository.findById(challenge.getId())).thenReturn(Optional.of(challenge));
+        when(patientRepository.findById(PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210")));
+
+        assertThat(service.verifyVoiceChallenge(challenge.getId(), TENANT_B_ID, PATIENT_ID, "9876543210",
+                "call-A", challenge.getInteractionId(), "123456").verified()).isFalse();
+        assertThat(service.verifyVoiceChallenge(challenge.getId(), TENANT_A_ID, UUID.randomUUID(), "9876543210",
+                "call-A", challenge.getInteractionId(), "123456").verified()).isFalse();
+        assertThat(service.verifyVoiceChallenge(challenge.getId(), TENANT_A_ID, PATIENT_ID, "9876543210",
+                "call-A", UUID.randomUUID(), "123456").verified()).isFalse();
     }
 
     private TenantEntity tenant(String code, UUID id) {

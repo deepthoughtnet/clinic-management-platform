@@ -54,6 +54,22 @@ management:
       show-details: never
 
 clinic:
+  aiva:
+    voice:
+      transaction-auth:
+        default-policy:
+          enabled: ${AIVA_VOICE_TRANSACTION_AUTH_ENABLED:false}
+          authentication-mode: ${AIVA_VOICE_TRANSACTION_AUTH_MODE:DISABLED}
+          auth-ttl-minutes: ${AIVA_VOICE_TRANSACTION_AUTH_TTL_MINUTES:15}
+          booking-auth-required: ${AIVA_VOICE_BOOKING_AUTH_REQUIRED:true}
+          booking-enabled: ${AIVA_VOICE_BOOKING_ENABLED:false}
+          lookup-auth-required: ${AIVA_VOICE_LOOKUP_AUTH_REQUIRED:true}
+          cancellation-auth-required: ${AIVA_VOICE_CANCELLATION_AUTH_REQUIRED:true}
+          reschedule-auth-required: ${AIVA_VOICE_RESCHEDULE_AUTH_REQUIRED:true}
+          guest-booking-enabled: ${AIVA_VOICE_GUEST_BOOKING_ENABLED:false}
+          minimal-registration-enabled: ${AIVA_VOICE_MINIMAL_REGISTRATION_ENABLED:true}
+          guest-booking-requires-mobile-confirmation: ${AIVA_VOICE_GUEST_BOOKING_REQUIRES_MOBILE_CONFIRMATION:true}
+          guest-booking-capability-ttl-minutes: ${AIVA_VOICE_GUEST_BOOKING_CAPABILITY_TTL_MINUTES:15}
   security:
     cors:
       allowed-origins: ${CLINIC_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5177,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5177}
@@ -255,8 +271,11 @@ engage:
     enabled: ${ENGAGE_VOICE_REMINDERS_ENABLED:false}
 
 aiva:
+  voice:
+    certification-harness:
+      enabled: ${AIVA_VOICE_CERTIFICATION_HARNESS_ENABLED:false}
   v2:
-    enabled: ${AIVA_V2_ENABLED:true}
+    enabled: ${AIVA_V2_ENABLED:false}
   response-composer:
     enabled: ${AIVA_RESPONSE_COMPOSER_ENABLED:false}
     timeout-seconds: ${AIVA_RESPONSE_COMPOSER_TIMEOUT_SECONDS:5}
@@ -269,8 +288,11 @@ logging:
     org.springframework.security: INFO
 
 voice:
+  booking-enabled: ${AIVA_VOICE_BOOKING_ENABLED:false}
+  otp-required: ${AIVA_VOICE_OTP_REQUIRED:true}
+  guest-booking-enabled: ${AIVA_VOICE_GUEST_BOOKING_ENABLED:false}
   enabled: ${VOICE_TEST_ENABLED:true}
-  aiva-v2-enabled: ${VOICE_AIVA_V2_ENABLED:true}
+  aiva-v2-enabled: ${VOICE_AIVA_V2_ENABLED:false}
   default-language: ${AIVA_DEFAULT_LANGUAGE:hi-IN}
   response-language: ${AIVA_RESPONSE_LANGUAGE:hi-IN}
   sarvam:
@@ -281,6 +303,11 @@ voice:
     base-url: ${SARVAM_BASE_URL:https://api.sarvam.ai}
     stt-path: ${SARVAM_STT_PATH:/speech-to-text}
     tts-path: ${SARVAM_TTS_PATH:/text-to-speech}
+    tts-model: ${SARVAM_TTS_MODEL:bulbul:v4-flash}
+    tts-speaker: ${SARVAM_TTS_SPEAKER:aparna_hi_customer}
+    tts-language-code: ${SARVAM_TTS_LANGUAGE_CODE:hi-IN}
+    tts-sample-rate: ${SARVAM_TTS_SAMPLE_RATE:16000}
+    tts-pace: ${SARVAM_TTS_PACE:1.0}
     default-language: ${SARVAM_DEFAULT_LANGUAGE:hi-IN}
     response-language: ${SARVAM_DEFAULT_LANGUAGE:hi-IN}
     connect-timeout-ms: ${SARVAM_CONNECT_TIMEOUT_MS:10000}

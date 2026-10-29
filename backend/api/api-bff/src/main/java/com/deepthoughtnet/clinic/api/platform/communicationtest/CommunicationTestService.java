@@ -38,6 +38,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceFlowTrace;
 
 import static com.deepthoughtnet.clinic.api.platform.communicationtest.CommunicationTestDtos.*;
 
@@ -280,6 +282,86 @@ public class CommunicationTestService {
         return callId == null ? null : inboundVoiceResults.get(callId);
     }
 
+    /**
+     * Creates a local certification call through the same DID and caller resolution used by
+     * the DotVoice inbound webhook. Tenant and patient identity are never supplied directly.
+     */
+    public InboundVoiceResult startLocalVoiceCertificationCall(String callerPhoneNumber, String didNumber,
+            UUID expectedTenantId) {
+        var resolved = communicationChannelResolver == null ? java.util.Optional.<Resolution>empty()
+                : communicationChannelResolver.resolveInboundVoiceByDidWithFallback(didNumber);
+        if (resolved.isEmpty() || resolved.get().tenantId() == null) {
+            throw new IllegalArgumentException("LOCAL_VOICE_CERTIFICATION_DID_NOT_RESOLVE");
+        }
+        if (!resolved.get().tenantId().equals(expectedTenantId)) {
+            throw new SecurityException("LOCAL_VOICE_CERTIFICATION_TENANT_MISMATCH");
+        }
+        String callId = "local-cert-" + UUID.randomUUID();
+        registerInboundCall(callId, callerPhoneNumber, didNumber);
+        InboundVoiceResult result = inboundVoiceResult(callId);
+        if (result == null || !"RESOLVED".equals(result.routingStatus())
+                || !expectedTenantId.equals(result.tenantId())) {
+            throw new IllegalArgumentException("LOCAL_VOICE_CERTIFICATION_DID_NOT_RESOLVE");
+        }
+        return result;
+    }
+
+    /** Submits a transcript after normal inbound tenant and caller/patient resolution. */
+    public VoiceReadOnlyAivaService.TurnResult submitLocalVoiceCertificationTranscript(
+            String callId, String transcript) {
+        if (!StringUtils.hasText(transcript)) throw new IllegalArgumentException("TRANSCRIPT_REQUIRED");
+        InboundVoiceResult current = inboundVoiceResult(callId);
+        if (current == null || !"RESOLVED".equals(current.routingStatus())) {
+            throw new IllegalArgumentException("LOCAL_VOICE_CERTIFICATION_CALL_NOT_FOUND");
+        }
+        if (voiceReadOnlyAivaService == null) throw new IllegalStateException("VOICE_RUNTIME_UNAVAILABLE");
+        VoiceIdentityTrust identityTrust = voiceReadOnlyAivaService.assessIdentityTrust(current.tenantId(),
+                current.clinicId(), current.identifiedPatientId(), current.normalizedCallerPhone(), current.callId());
+        VoiceReadOnlyAivaService.Context context = new VoiceReadOnlyAivaService.Context(
+                current.callId(), current.interactionId(), current.tenantId(), current.communicationChannelId(),
+                current.clinicId(), current.locationId(), current.language(), current.patientIdentificationStatus(),
+                current.conversationPartyType(), current.identifiedPatientId(), current.normalizedCallerPhone(), identityTrust);
+        int turnCount = inboundTurnCounts.computeIfAbsent(callId,
+                ignored -> new java.util.concurrent.atomic.AtomicInteger(0)).incrementAndGet();
+        String turnId = UUID.randomUUID().toString();
+        MDC.put(AivaV2VoiceFlowTrace.TURN_ID, turnId);
+        MDC.put(AivaV2VoiceFlowTrace.TURN_NUMBER, Integer.toString(turnCount));
+        MDC.put(AivaV2VoiceFlowTrace.TENANT_ID, current.tenantId().toString());
+        MDC.put(AivaV2VoiceFlowTrace.CALL_ID, callId);
+        MDC.put(AivaV2VoiceFlowTrace.CONVERSATION_HASH, AivaV2VoiceFlowTrace.conversationHash(callId));
+        try {
+            boolean sensitiveAuthInput = voiceReadOnlyAivaService.isAwaitingOtp(context);
+            String storedTranscript = sensitiveAuthInput ? "[REDACTED_AUTH_INPUT]" : transcript;
+            updateInbound(callId, result -> result.withLifecycle("CAPTURED", "LOCAL_TRANSCRIPT", storedTranscript,
+                    result.receivedAt(), result.answeredAt(), OffsetDateTime.now(), result.endedAt(), result.hangupCause()));
+            persistInteractionUpdate(callId, row -> row.markTranscriptPresent());
+            log.info("VOICE_CERTIFICATION_TRANSCRIPT_SUBMITTED callId={} turnNumber={} transcriptChars={} transcriptRedacted={}",
+                    callId, turnCount, sensitiveAuthInput ? 0 : transcript.length(), sensitiveAuthInput);
+            VoiceReadOnlyAivaService.TurnResult turn = voiceReadOnlyAivaService.continueTurn(context, transcript);
+            Map<String, Object> diagnostics = new java.util.LinkedHashMap<>(turn.runtimeDiagnostics());
+            diagnostics.putIfAbsent("presentationMode", voiceReadOnlyAivaService.presentationModeName(context));
+            diagnostics.putIfAbsent("ttsLanguage", voiceReadOnlyAivaService.presentationLanguage(context));
+            updateInbound(callId, result -> result.withAivaTurn("voice-" + callId, turnCount,
+                    turn.intent(), turn.tool(), turn.response(), storedTranscript, "LOCAL_TRANSCRIPT",
+                    turn.policyDecision(), turn.toolExecutionStatus(), turn.toolInputSpeciality(),
+                    turn.toolResultCount(), turn.toolResultSummary(), diagnostics));
+            log.info("VOICE_CERTIFICATION_TURN_COMPLETE callId={} turnNumber={} intent={} tool={} mutationBlocked={}",
+                    callId, turnCount, turn.intent(), turn.tool(), turn.mutationBlocked());
+            return turn;
+        } finally {
+            MDC.remove(AivaV2VoiceFlowTrace.TURN_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.TURN_NUMBER);
+            MDC.remove(AivaV2VoiceFlowTrace.TENANT_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.CALL_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.CONVERSATION_HASH);
+        }
+    }
+
+    public void endLocalVoiceCertificationCall(String callId) {
+        if (inboundVoiceResult(callId) == null) throw new IllegalArgumentException("LOCAL_VOICE_CERTIFICATION_CALL_NOT_FOUND");
+        onInboundStreamStopped(callId, "LOCAL_CERTIFICATION_COMPLETE");
+    }
+
     public void markInboundAnswered(String callId) {
         log.info("DOTVOICE_INBOUND_CALL_ANSWERED callId={}", callId);
         updateInbound(callId, result -> result.withLifecycle("ANSWERED", result.sttProvider(), result.firstTranscript(),
@@ -400,9 +482,32 @@ public class CommunicationTestService {
                 captureStarted.set(false);
                 return;
             }
+            VoiceIdentityTrust identityTrust = voiceReadOnlyAivaService == null ? VoiceIdentityTrust.guest()
+                    : voiceReadOnlyAivaService.assessIdentityTrust(current.tenantId(), current.clinicId(),
+                            current.identifiedPatientId(), current.normalizedCallerPhone(), current.callId());
+            VoiceReadOnlyAivaService.Context context = new VoiceReadOnlyAivaService.Context(
+                    callId, current.interactionId(), current.tenantId(), current.communicationChannelId(),
+                    current.clinicId(), current.locationId(), current.language(), current.patientIdentificationStatus(),
+                    current.conversationPartyType(), current.identifiedPatientId(), current.normalizedCallerPhone(), identityTrust);
+            boolean sensitiveAuthInput = voiceReadOnlyAivaService != null && voiceReadOnlyAivaService.isAwaitingOtp(context);
+            String storedTranscript = sensitiveAuthInput ? "[REDACTED_AUTH_INPUT]" : transcript;
+            int turnCount = inboundTurnCounts.computeIfAbsent(callId,
+                    ignored -> new java.util.concurrent.atomic.AtomicInteger(0)).incrementAndGet();
+            String turnId = UUID.randomUUID().toString();
+            MDC.put(AivaV2VoiceFlowTrace.TURN_ID, turnId);
+            MDC.put(AivaV2VoiceFlowTrace.TURN_NUMBER, Integer.toString(turnCount));
+            MDC.put(AivaV2VoiceFlowTrace.TENANT_ID, current.tenantId() == null ? "absent" : current.tenantId().toString());
+            MDC.put(AivaV2VoiceFlowTrace.CALL_ID, callId);
+            MDC.put(AivaV2VoiceFlowTrace.CONVERSATION_HASH, AivaV2VoiceFlowTrace.conversationHash(callId));
             updateInbound(callId, result -> result.withLifecycle("CAPTURED", transcription == null ? null : transcription.providerName(),
-                    transcript, result.receivedAt(), result.answeredAt(), OffsetDateTime.now(), result.endedAt(), result.hangupCause()));
+                    storedTranscript, result.receivedAt(), result.answeredAt(), OffsetDateTime.now(), result.endedAt(), result.hangupCause()));
             persistInteractionUpdate(callId, row -> row.markTranscriptPresent());
+            log.info("AIVA_V2_VOICE_FLOW stage=STT_FINAL tenantId={} providerCallId={} conversationIdHash={} turnId={} turnNumber={} "
+                            + "transcriptPresent=true transcriptChars={} transcriptRedacted={} language={} sttProvider={}",
+                    current.tenantId(), callId,
+                    AivaV2VoiceFlowTrace.conversationHash(callId), turnId, turnCount,
+                    sensitiveAuthInput ? 0 : transcript.length(), sensitiveAuthInput, current.language(),
+                    transcription == null ? null : transcription.providerName());
             log.info("DOTVOICE_INBOUND_STT_RESULT callId={} provider={} success=true transcriptPresent={} language={}",
                     callId, transcription == null ? null : transcription.providerName(), StringUtils.hasText(transcript), current.language());
             log.info("DOTVOICE_INBOUND_FIRST_UTTERANCE_CAPTURED callId={}", callId);
@@ -411,28 +516,39 @@ public class CommunicationTestService {
                 log.warn("DOTVOICE_INBOUND_AIVA_CONTINUATION_DISABLED callId={} reason=AIVA_SERVICE_NOT_WIRED", callId);
                 playInboundAudio(callId, "धन्यवाद। आपका संदेश प्राप्त हो गया है।", true);
             } else {
-                VoiceReadOnlyAivaService.Context context = new VoiceReadOnlyAivaService.Context(
-                        callId, current.interactionId(), current.tenantId(), current.communicationChannelId(),
-                        current.clinicId(), current.locationId(), current.language(), current.patientIdentificationStatus(), current.conversationPartyType(),
-                        current.identifiedPatientId());
                 VoiceReadOnlyAivaService.TurnResult turn = voiceReadOnlyAivaService.continueTurn(context, transcript);
-                int turnCount = inboundTurnCounts.computeIfAbsent(callId,
-                        ignored -> new java.util.concurrent.atomic.AtomicInteger(0)).incrementAndGet();
+                Map<String, Object> responseDiagnostics = new java.util.LinkedHashMap<>(turn.runtimeDiagnostics());
+                responseDiagnostics.putIfAbsent("presentationMode", voiceReadOnlyAivaService.presentationModeName(context));
+                responseDiagnostics.putIfAbsent("ttsLanguage", voiceReadOnlyAivaService.presentationLanguage(context));
                 updateInbound(callId, result -> result.withAivaTurn("voice-" + callId, turnCount,
-                        turn.intent(), turn.tool(), turn.response(), transcript,
+                        turn.intent(), turn.tool(), turn.response(), storedTranscript,
                         transcription == null ? current.sttProvider() : transcription.providerName(),
                         turn.policyDecision(), turn.toolExecutionStatus(), turn.toolInputSpeciality(),
-                        turn.toolResultCount(), turn.toolResultSummary()));
+                        turn.toolResultCount(), turn.toolResultSummary(), responseDiagnostics));
                 log.info("VOICE_AIVA_TURN_START callId={} turnNumber={}", callId, turnCount);
                 log.info("VOICE_AIVA_INTENT callId={} intent={} tool={}", callId, turn.intent(), turn.tool());
                 if (turn.mutationBlocked()) {
                     log.info("VOICE_AIVA_MUTATION_BLOCKED callId={} tool={}", callId, turn.tool());
                 }
                 log.info("VOICE_AIVA_RESPONSE_READY callId={} turnNumber={}", callId, turnCount);
-                playInboundAudio(callId, turn.response(), turn.closing());
+                playInboundAudio(callId, turn.response(), turn.closing(),
+                        voiceReadOnlyAivaService.presentationLanguage(context),
+                        String.valueOf(responseDiagnostics.getOrDefault("responseIntent",
+                                StringUtils.hasText(turn.toolResultSummary()) ? turn.toolResultSummary() : turn.intent())),
+                        responseDiagnostics);
             }
+            MDC.remove(AivaV2VoiceFlowTrace.TURN_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.TURN_NUMBER);
+            MDC.remove(AivaV2VoiceFlowTrace.TENANT_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.CALL_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.CONVERSATION_HASH);
             captureStarted.set(false);
         } catch (RuntimeException ex) {
+            MDC.remove(AivaV2VoiceFlowTrace.TURN_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.TURN_NUMBER);
+            MDC.remove(AivaV2VoiceFlowTrace.TENANT_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.CALL_ID);
+            MDC.remove(AivaV2VoiceFlowTrace.CONVERSATION_HASH);
             captureStarted.set(false);
             log.info("DOTVOICE_INBOUND_STT_RESULT callId={} provider={} success=false transcriptPresent=false language={}",
                     callId, current.sttProvider(), current.language());
@@ -486,23 +602,80 @@ public class CommunicationTestService {
     private void playInboundAudio(String callId, String text, boolean closing) {
         InboundVoiceResult result = inboundVoiceResult(callId);
         if (result == null || reminderVoiceRenderer == null || dotVoiceMediaStreamClient == null) return;
+        playInboundAudio(callId, text, closing, StringUtils.hasText(result.language()) ? result.language() : "hi-IN",
+                "VOICE_RESPONSE", Map.of());
+    }
+
+    private void playInboundAudio(String callId, String text, boolean closing, String presentationLanguage,
+            String responseIntent, Map<String, Object> diagnostics) {
+        InboundVoiceResult result = inboundVoiceResult(callId);
+        if (result == null) return;
+        Map<String, Object> safeDiagnostics = diagnostics == null ? Map.of() : diagnostics;
+        Object modeValue = safeDiagnostics.get("presentationMode");
+        String presentationMode = modeValue == null ? "" : String.valueOf(modeValue).trim().toUpperCase(java.util.Locale.ROOT);
+        String ttsLanguage = "ENGLISH".equals(presentationMode) ? "en-IN"
+                : "HINDI".equals(presentationMode) || "HINGLISH".equals(presentationMode) ? "hi-IN"
+                : StringUtils.hasText(presentationLanguage) ? presentationLanguage : "hi-IN";
+        log.info("VOICE_RESPONSE_RENDERED conversationIdHash={} turnId={} context={} responseIntent={} "
+                        + "decisionAction={} presentationMode={} ttsLanguage={} ttsTextLanguageProfile={} responseLength={} "
+                        + "providerPresent={} datePresent={} slotPresent={}",
+                AivaV2VoiceFlowTrace.conversationHash(callId), MDC.get(AivaV2VoiceFlowTrace.TURN_ID),
+                safeDiagnostics.getOrDefault("decisionContext", "VOICE_READ_ONLY"),
+                StringUtils.hasText(responseIntent) ? responseIntent : "VOICE_RESPONSE",
+                safeDiagnostics.getOrDefault("decisionAction", "COMPATIBILITY"),
+                safeDiagnostics.getOrDefault("presentationMode", "CALL_LANGUAGE"), ttsLanguage,
+                safeDiagnostics.getOrDefault("ttsTextLanguageProfile",
+                        safeDiagnostics.getOrDefault("presentationMode", "CALL_LANGUAGE")),
+                text == null ? 0 : text.length(), safeDiagnostics.getOrDefault("providerPresent", false),
+                safeDiagnostics.getOrDefault("datePresent", false), safeDiagnostics.getOrDefault("slotPresent", false));
+        if (dotVoiceMediaStreamClient == null) return;
+        if (reminderVoiceRenderer == null) {
+            dotVoiceMediaStreamClient.onPlaybackPreparationFailed(callId);
+            if (closing) onInboundClosingPlaybackComplete(callId);
+            return;
+        }
         updateInbound(callId, current -> current.withTtsDetails(text, null, closing));
         if (closing) {
             updateInbound(callId, current -> current.withLifecycle("CLOSING", current.sttProvider(), current.firstTranscript(),
                     current.receivedAt(), current.answeredAt(), current.capturedAt(), current.endedAt(), current.hangupCause()));
         }
-        ReminderVoiceRenderer.RenderedReminder rendered = reminderVoiceRenderer.render(text, result.language());
+        boolean hasPersistedMode = java.util.Set.of("ENGLISH", "HINDI", "HINGLISH").contains(presentationMode);
+        ReminderVoiceRenderer.RenderedReminder rendered = hasPersistedMode
+                ? reminderVoiceRenderer.render(text, presentationMode, ttsLanguage)
+                : reminderVoiceRenderer.render(text, ttsLanguage);
+        log.info("VOICE_TTS_RESULT conversationIdHash={} turnId={} responseIntent={} presentationMode={} "
+                        + "ttsLanguage={} ttsTextLanguageProfile={} provider={} success={}",
+                AivaV2VoiceFlowTrace.conversationHash(callId), MDC.get(AivaV2VoiceFlowTrace.TURN_ID),
+                StringUtils.hasText(responseIntent) ? responseIntent : "VOICE_RESPONSE",
+                safeDiagnostics.getOrDefault("presentationMode", "CALL_LANGUAGE"), ttsLanguage,
+                safeDiagnostics.getOrDefault("ttsTextLanguageProfile",
+                        safeDiagnostics.getOrDefault("presentationMode", "CALL_LANGUAGE")),
+                rendered.provider(), rendered.audio() != null && rendered.audio().audioBytes() != null);
         updateInbound(callId, current -> current.withTtsDetails(text, rendered.provider(), closing));
         if (rendered.audio() == null) {
+            log.warn("DOTVOICE_INBOUND_TTS_FAILED callId={} reason={}", callId,
+                    rendered.failureCategory() == null ? "TTS_AUDIO_UNAVAILABLE" : rendered.failureCategory());
+            dotVoiceMediaStreamClient.onPlaybackPreparationFailed(callId);
             if (closing) onInboundClosingPlaybackComplete(callId);
             return;
         }
         try {
             var pcm = ReminderAudioNormalizer.normalize(rendered.audio().audioBytes(), rendered.audio().contentType(), rendered.sourceSampleRate());
+            log.info("VOICE_TTS_AUDIO_NORMALIZED provider={} encoding=PCM16 sampleRate={} channels={}",
+                    rendered.provider(), pcm.sampleRate(), pcm.channels());
+            log.info("VOICE_PLAYBACK_FORMAT provider={} sourceSampleRate={} playbackSampleRate=8000 resampled={} encoding=G711_MULAW channels=1",
+                    rendered.provider(), pcm.sampleRate(), pcm.sampleRate() != 8_000 || pcm.channels() != 1);
             List<byte[]> frames = G711MuLawAudioConverter.toFramesPcm(pcm.bytes(), pcm.sampleRate(), pcm.channels());
-            if (!dotVoiceMediaStreamClient.startPlayback(callId, frames) && closing) onInboundClosingPlaybackComplete(callId);
+            log.info("DOTVOICE_PLAYBACK_START providerCallId={} provider={} purpose={} frameCount={} audioBytes={}",
+                    callId, rendered.provider(), closing ? "CLOSING" : "INBOUND_RESPONSE", frames.size(), frames.size() * 160);
+            boolean playbackStarted = dotVoiceMediaStreamClient.startPlayback(callId, frames);
+            if (!playbackStarted) {
+                dotVoiceMediaStreamClient.onPlaybackPreparationFailed(callId);
+                if (closing) onInboundClosingPlaybackComplete(callId);
+            }
         } catch (RuntimeException ex) {
             log.warn("DOTVOICE_INBOUND_TTS_FAILED callId={} reason={}", callId, safeSttFailureReason(ex));
+            dotVoiceMediaStreamClient.onPlaybackPreparationFailed(callId);
             if (closing) onInboundClosingPlaybackComplete(callId);
         }
     }

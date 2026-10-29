@@ -37,6 +37,7 @@ export type CommunicationTestInboundVoiceResult = {
   identifiedPatientId: string | null; identifiedPatientName: string | null; candidateCount: number; identificationSource: string;
   interactionId: string | null; conversationPartyType: "IDENTIFIED_PATIENT" | "GUEST_CALLER" | "PATIENT_UNRESOLVED" | string;
   aivaSessionId: string | null; aivaRuntime?: string | null; conversationMode: string | null; turnCount: number;
+  aivaBuildIdentity?: Record<string, string>;
   lastDetectedIntent: string | null; lastTool: string | null; lastAivaResponse: string | null;
   conversationTurns: CommunicationTestInboundVoiceTurn[];
 };
@@ -46,6 +47,7 @@ export type CommunicationTestInboundVoiceTurn = {
   toolInputSpeciality: string | null; toolResultCount: number; toolResultSummary: string | null;
   policyDecision: string; aivaResponseText: string | null; ttsText: string | null;
   ttsProvider: string | null; startedAt: string | null; completedAt: string | null; closing: boolean;
+  runtimeDiagnostics?: Record<string, unknown>;
 };
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type AppointmentType = "WALK_IN" | "SCHEDULED" | "FOLLOW_UP" | "VACCINATION";

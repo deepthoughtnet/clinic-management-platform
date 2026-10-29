@@ -17,6 +17,17 @@ interface AivaV2ConversationDecisionGateway {
         return decide(turn.rawText(), turn.languageCode(), context);
     }
 
+    default ConversationDecision decide(NormalizedUserTurn turn, SessionProjection context,
+                                        AivaExecutionContext executionContext) {
+        return decide(turn, context);
+    }
+
+    /** Deterministic-only parser reuse for bounded Voice time refinement; never invokes semantic AI. */
+    default ConversationDecision deterministicCollectionTimeConstraint(NormalizedUserTurn turn,
+            SessionProjection context) {
+        return null;
+    }
+
     default NormalizedUserTurn presentationTurn(String text, String language) {
         return new NormalizedUserTurn(text, text, text, language, null, false,
                 java.util.List.of(), language, ResponseStyle.STANDARD);

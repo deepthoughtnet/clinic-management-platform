@@ -153,6 +153,22 @@ class PatientServiceTest {
     }
 
     @Test
+    void voiceGuestCreateUsesCanonicalPatientServiceAndRecordsTruthfulSourceWithoutPortalActor() {
+        UUID tenantId = UUID.randomUUID();
+        UUID interactionId = UUID.randomUUID();
+
+        var created = service.createVoiceGuest(tenantId, command("Asha", "Rao", "9876543210"), interactionId);
+
+        assertThat(created.tenantId()).isEqualTo(tenantId);
+        assertThat(created.mobile()).isEqualTo("9876543210");
+        ArgumentCaptor<AuditEventCommand> audit = ArgumentCaptor.forClass(AuditEventCommand.class);
+        verify(auditEventPublisher).record(audit.capture());
+        assertThat(audit.getValue().actorAppUserId()).isNull();
+        assertThat(audit.getValue().detailsJson()).contains("VOICE_GUEST_BOOKING", "VOICE", interactionId.toString());
+        verify(repository).save(any(PatientEntity.class));
+    }
+
+    @Test
     void searchReturnsMultiplePatientsWithSameMobile() {
         UUID tenantId = UUID.randomUUID();
         PatientEntity first = PatientEntity.create(tenantId, "PAT-FIRST");

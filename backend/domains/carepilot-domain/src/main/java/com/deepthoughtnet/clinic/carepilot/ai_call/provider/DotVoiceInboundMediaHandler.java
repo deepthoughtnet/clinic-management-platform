@@ -8,5 +8,7 @@ public interface DotVoiceInboundMediaHandler {
     default void onMedia(String providerCallId, byte[] muLawAudio) {}
     default void onPlaybackStarted(String providerCallId) {}
     default void onPlaybackComplete(String providerCallId) {}
+    /** Called when response preparation fails before media is sent to the call. */
+    default void onPlaybackPreparationFailed(String providerCallId) {}
     default void onStreamStop(String providerCallId, String cause) {}
 }

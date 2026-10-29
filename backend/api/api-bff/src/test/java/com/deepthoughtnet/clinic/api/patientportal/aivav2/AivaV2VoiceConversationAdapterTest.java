@@ -1,13 +1,23 @@
 package com.deepthoughtnet.clinic.api.patientportal.aivav2;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityResult;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilitySlot;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.SessionProjection;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.LanguageAdapterRegistry;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.DoctorNameNormalizer;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.language.NormalizedUserTurn;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2VoiceToolExecutor.QueryType;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -17,6 +27,29 @@ import org.junit.jupiter.api.Test;
 
 class AivaV2VoiceConversationAdapterTest {
     private static final UUID TENANT = UUID.randomUUID();
+
+    @Test
+    void unsupportedProtectedVoiceRequestsAreClassifiedWithoutBusinessToolExecution() {
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                new AivaV2SessionStore(Clock.systemUTC()), mock(AivaV2ConversationDecisionGateway.class),
+                LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("unsupported-scope");
+
+        var reschedule = adapter.unsupportedVoiceScopeRequest(context, "appointment reschedule karna hai");
+        var cancel = adapter.unsupportedVoiceScopeRequest(context, "appointment cancel karna hai");
+        var reports = adapter.unsupportedVoiceScopeRequest(context, "meri reports batao");
+        var prescription = adapter.unsupportedVoiceScopeRequest(context, "last prescription kya thi");
+        var consultation = adapter.unsupportedVoiceScopeRequest(context, "purani consultation dikhao");
+
+        assertThat(reschedule.category()).isEqualTo("RESCHEDULE_NOT_SUPPORTED");
+        assertThat(reschedule.response()).contains("Care");
+        assertThat(cancel.category()).isEqualTo("CANCEL_NOT_SUPPORTED");
+        assertThat(cancel.response()).contains("Care");
+        assertThat(reports.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(prescription.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(consultation.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(reports.response()).contains("Care");
+    }
 
     @Test
     void usesV2SessionForReadOnlyVoiceTurnsAndCarriesProviderContextForward() {
@@ -49,6 +82,175 @@ class AivaV2VoiceConversationAdapterTest {
     }
 
     @Test
+    void futureAppointmentAvailabilityRoutesToSlotsButOwnedAppointmentQueriesStayProtected() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("availability-versus-history", "en-IN");
+        ProviderCandidate doctor = new ProviderCandidate("amit", "amit", "doctor-amit", "clinic",
+                TENANT.toString(), "clinic", null, "Amit Verma", "General Medicine", "Clinic",
+                AivaV2Models.ProviderSource.CARE_PRIVATE,
+                new AivaV2Models.ProviderCapabilities(true, true, false, false, false, true, true));
+        store.update("VOICE|" + TENANT + "|availability-versus-history", ignored ->
+                new SessionProjection("availability-versus-history", null, TENANT.toString(), null,
+                        null, null, null, null, 1, Instant.now().plusSeconds(600)).withActiveVoiceDoctor(doctor));
+        var requested = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
+
+        var availability = adapter.continueTurn(context, "2 November evening appointment available?",
+                (tool, execution, input) -> {
+                    requested.set(input);
+                    return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 0, 0,
+                            "no slots", List.of());
+                });
+        assertThat(availability.tool()).isEqualTo("FIND_SLOTS");
+        assertThat(requested.get().date()).isEqualTo(LocalDate.of(2026, 11, 2));
+        assertThat(requested.get().daypart()).isEqualTo(NormalizedUserTurn.Daypart.EVENING);
+        assertThat(adapter.unsupportedVoiceScopeRequest(context, "my upcoming appointment status").category())
+                .isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(adapter.unsupportedVoiceScopeRequest(context, "appointment status").category())
+                .isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(adapter.unsupportedVoiceScopeRequest(context, "meri booking").category())
+                .isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+    }
+
+    @Test
+    void discoveryAndProviderInspectionEscapeBookingContextWithoutChangingDraftProvider() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        String call = "booking-context-read-only-escape";
+        AivaExecutionContext context = context(call, "en-IN");
+        ProviderCandidate amit = new ProviderCandidate("amit", "amit", "doctor-amit", "clinic",
+                TENANT.toString(), "clinic", null, "Amit Verma", "General Medicine", "Clinic",
+                AivaV2Models.ProviderSource.CARE_PRIVATE,
+                new AivaV2Models.ProviderCapabilities(true, true, false, false, false, true, true));
+        Instant expiry = Instant.now().plusSeconds(900);
+        AivaV2Models.BookingDraft draft = new AivaV2Models.BookingDraft(UUID.randomUUID(), null,
+                TENANT.toString(), amit, null, LocalDate.of(2026, 11, 2), "evening", null,
+                null, null, null, AivaV2Models.DraftStatus.COLLECTING, 1, expiry, null);
+        store.update("VOICE|" + TENANT + "|" + call, ignored -> new SessionProjection(call, null,
+                TENANT.toString(), draft, null, null, null, null, 1, expiry));
+
+        assertThat(adapter.shouldRouteVoiceBookingTurn(context, "which doctor is this for?")).isFalse();
+        var inspection = adapter.continueTurn(context, "which doctor is this for?",
+                (tool, execution, input) -> { throw new AssertionError("inspection is read-only and needs no tool"); });
+        assertThat(inspection.intent()).isEqualTo("ANSWER_PROVIDER_CONTEXT");
+        assertThat(inspection.toolExecuted()).isFalse();
+
+        assertThat(adapter.shouldRouteVoiceBookingTurn(context, "show doctors")).isFalse();
+        var discovery = adapter.continueTurn(context, "show doctors",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+        assertThat(discovery.tool()).isEqualTo("FIND_DOCTOR");
+        assertThat(store.find("VOICE|" + TENANT + "|" + call).orElseThrow()
+                .activeDraft().selectedProvider().doctorId()).isEqualTo("doctor-amit");
+        assertThat(adapter.shouldRouteVoiceBookingTurn(context, "change date")).isTrue();
+        assertThat(adapter.shouldRouteVoiceBookingTurn(context, "change time")).isTrue();
+    }
+
+    @Test
+    void readOnlySlotPagePaginatesRetainedSnapshotAndRoutesDisplayedHindiTimeForBooking() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        String callId = "read-only-displayed-slot-page";
+        AivaExecutionContext context = context(callId);
+        ProviderCandidate doctor = new ProviderCandidate("amit", "amit", "doctor-1", "clinic",
+                TENANT.toString(), "clinic", null, "Amit Verma", "General Medicine", "Clinic",
+                AivaV2Models.ProviderSource.CARE_PRIVATE,
+                new AivaV2Models.ProviderCapabilities(true, true, false, false, false, true, true));
+        LocalDate date = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1);
+        List<LocalTime> times = List.of(LocalTime.of(17, 0), LocalTime.of(17, 30), LocalTime.of(18, 0),
+                LocalTime.of(18, 30), LocalTime.of(19, 0), LocalTime.of(19, 30), LocalTime.of(20, 0),
+                LocalTime.of(20, 30), LocalTime.of(21, 0), LocalTime.of(21, 30), LocalTime.of(22, 0),
+                LocalTime.of(22, 30));
+        Instant now = Instant.now();
+        AvailabilityResult availability = new AvailabilityResult(UUID.randomUUID(), null, 0,
+                "voice-read-only", doctor.doctorId(), doctor.doctorId(), doctor.clinicId(), date,
+                "evening", null, "Asia/Kolkata", times.stream().map(time -> new AvailabilitySlot(null,
+                time, time.plusMinutes(30), time.toString())).toList(), "VOICE_DAYPART:EVENING", true,
+                now, now.plusSeconds(600), 0, 3);
+        store.update("VOICE|" + TENANT + "|" + callId, ignored -> new SessionProjection(callId, null,
+                TENANT.toString(), null, null, null, availability, null, now.plusSeconds(1800))
+                .withActiveVoiceDoctor(doctor));
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+
+        var pageTwo = adapter.continueTurn(context, "और समय बताइए", (tool, execution, input) -> {
+            throw new AssertionError("retained pagination must not reload availability");
+        });
+        assertThat(pageTwo.intent()).isEqualTo("SHOW_MORE_SLOTS");
+        assertThat(pageTwo.runtimeDiagnostics()).containsEntry("availabilityReloaded", false);
+        assertThat(store.find("VOICE|" + TENANT + "|" + callId).orElseThrow()
+                .latestAvailabilityResult().displayOffset()).isEqualTo(3);
+
+        adapter.continueTurn(context, "और समय बताइए", (tool, execution, input) -> {
+            throw new AssertionError("second retained pagination must not reload availability");
+        });
+        SessionProjection pageThree = store.find("VOICE|" + TENANT + "|" + callId).orElseThrow();
+        assertThat(pageThree.latestAvailabilityResult().displayOffset()).isEqualTo(6);
+        assertThat(pageThree.latestAvailabilityResult().date()).isEqualTo(date);
+        assertThat(pageThree.activeVoiceDoctor().doctorId()).isEqualTo(doctor.doctorId());
+
+        assertThat(adapter.shouldRouteVoiceBookingTurn(context, "नौ बजे का बुक कर दो")).isTrue();
+        var selection = adapter.continueTurn(context, "नौ बजे का बुक कर दो", (tool, execution, input) -> {
+            throw new AssertionError("displayed slot selection is resolved before generic tools");
+        });
+        assertThat(selection.intent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(selection.toolResultSummary()).isEqualTo("DISPLAYED_SLOT_SELECTED_PENDING_CANONICAL_REVALIDATION");
+        assertThat(selection.runtimeDiagnostics()).containsEntry("canonicalSlotSelected", true)
+                .containsEntry("dateRetained", true).containsEntry("providerRetained", true);
+        assertThat(selection.normalizedTurn().exactTime()).isEqualTo(LocalTime.of(21, 0));
+    }
+
+    @Test
+    void explicitReadOnlyProviderSwitchPersistsBoundConfirmationAndPreservesBooking() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaExecutionContext context = context("atomic-provider-switch");
+        String key = "VOICE|" + TENANT + "|atomic-provider-switch";
+        AivaV2Models.ProviderCandidate ravi = new AivaV2Models.ProviderCandidate("ravi", "ravi", "doctor-ravi", null, TENANT.toString(),
+                null, null, "Ravi Mehta", "General Medicine", "Clinic", AivaV2Models.ProviderSource.CARE_PRIVATE,
+                new AivaV2Models.ProviderCapabilities(true, true, false, false, false, true, false));
+        AivaV2Models.ProviderCandidate amit = new AivaV2Models.ProviderCandidate("amit", "amit", "doctor-amit", null, TENANT.toString(),
+                null, null, "Amit Verma", "General Medicine", "Clinic", AivaV2Models.ProviderSource.CARE_PRIVATE,
+                new AivaV2Models.ProviderCapabilities(true, true, false, false, false, true, false));
+        AivaV2TransactionalExecutionBoundary boundary = mock(AivaV2TransactionalExecutionBoundary.class);
+        when(boundary.resolveVoiceBookingProvider(eq(TENANT), any())).thenReturn(amit);
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults(),
+                new AivaTransactionCapabilityGate(), boundary);
+        AivaV2Models.BookingDraft draft = new AivaV2Models.BookingDraft(UUID.randomUUID(), null,
+                TENANT.toString(), ravi, null, LocalDate.of(2026, 10, 26), null, null, null,
+                UUID.randomUUID(), null, AivaV2Models.DraftStatus.COLLECTING, 3,
+                java.time.Instant.now().plusSeconds(900), null);
+        AivaV2Models.AvailabilityResult prior = new AivaV2Models.AvailabilityResult(UUID.randomUUID(), draft.draftId(),
+                draft.revision(), "prior", ravi.providerHandle(), ravi.doctorId(), null, draft.preferredDate(),
+                null, null, "Asia/Kolkata", List.of(), null, false, java.time.Instant.now(),
+                java.time.Instant.now().plusSeconds(300), 0, 3);
+        store.update(key, ignored -> new AivaV2Models.SessionProjection(context.sessionId(), null,
+                TENANT.toString(), draft, null, null, prior, null, null, 1,
+                java.time.Instant.now().plusSeconds(1800)).withActiveVoiceDoctor(ravi));
+        var executed = new java.util.ArrayList<String>();
+
+        var result = adapter.continueTurn(context, "Amit Verma 2 November evening slots", (tool, execution, input) -> {
+            executed.add(tool);
+            if ("FIND_DOCTOR".equals(tool)) return singleDoctor("doctor-amit", "Amit Verma", "General Medicine");
+            throw new AssertionError("provider switch must not reload availability: " + tool);
+        });
+
+        var updated = store.find(key).orElseThrow();
+        assertThat(executed).containsExactly("FIND_DOCTOR");
+        assertThat(result.intent()).isEqualTo("PROVIDER_SWITCH_CONFIRMATION_REQUIRED");
+        assertThat(result.toolResultSummary()).isEqualTo("PROVIDER_SWITCH_CONFIRMATION_PENDING");
+        assertThat(updated.voiceClarificationState().pendingAction()).isEqualTo("PROVIDER_SWITCH_CONFIRMATION");
+        assertThat(updated.voiceClarificationState().pendingProviderSwitch().targetProviderId()).isEqualTo("doctor-amit");
+        assertThat(updated.voiceClarificationState().pendingProviderSwitch().requestedDate())
+                .isEqualTo(LocalDate.of(2026, 11, 2));
+        assertThat(updated.voiceClarificationState().pendingProviderSwitch().requestedTimeWindow())
+                .isEqualTo("evening");
+        assertThat(updated.activeVoiceDoctor().doctorId()).isEqualTo("doctor-ravi");
+        assertThat(updated.activeDraft()).isEqualTo(draft);
+        assertThat(updated.latestAvailabilityResult()).isEqualTo(prior);
+    }
+
+    @Test
     void activeDoctorSurvivesClarificationAndBlockedMutationUntilCallCloses() {
         AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
         AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
@@ -67,7 +269,7 @@ class AivaV2VoiceConversationAdapterTest {
 
         var blocked = adapter.continueTurn(context, "unka appointment chahiye",
                 (tool, execution, input) -> { throw new AssertionError("mutation must remain blocked"); });
-        assertThat(blocked.intent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(blocked.intent()).isEqualTo("CONSULT_DOCTOR");
         assertThat(blocked.policyDecision()).isEqualTo("BLOCKED_READ_ONLY");
         assertThat(store.find("VOICE|" + TENANT + "|active-doctor-lifecycle").orElseThrow()
                 .activeVoiceDoctor().displayName()).isEqualTo("Ravi Mehta");
@@ -141,7 +343,62 @@ class AivaV2VoiceConversationAdapterTest {
         assertThat(result.mutationBlocked()).isTrue();
         assertThat(result.intent()).isEqualTo("BOOK_APPOINTMENT");
         assertThat(result.tool()).isEqualTo("BOOK_APPOINTMENT");
-        assertThat(result.response()).contains("बुकिंग");
+        assertThat(result.response()).contains("kis doctor");
+    }
+
+    @Test
+    void identifiedPatientVoiceBookingIsDeniedBeforeExecutorAndReportsNoAuthentication() {
+        UUID identifiedPatient = UUID.randomUUID();
+        String callId = "identified-not-authenticated";
+        AivaExecutionContext voiceContext = new AivaExecutionContext(TENANT, identifiedPatient, "VOICE", "hi-IN",
+                ZoneId.of("Asia/Kolkata"), callId, null, null, null,
+                Set.of("FIND_DOCTOR", "FIND_DOCTOR_SCHEDULE", "FIND_SLOTS"), callId,
+                "interaction-correlation", AivaTransactionAuthorization.unauthenticated(TENANT, callId, identifiedPatient));
+        var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+
+        var result = adapter.continueTurn(voiceContext, "मेरा appointment book कर दीजिए",
+                (tool, context, input) -> { throw new AssertionError("denied transaction reached executor"); });
+
+        assertThat(result.intent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(result.policyDecision()).isEqualTo("BLOCKED_READ_ONLY");
+        assertThat(result.toolExecuted()).isFalse();
+        assertThat(result.runtimeDiagnostics()).containsKey("transactionAuthorization");
+        @SuppressWarnings("unchecked")
+        var authorization = (java.util.Map<String, Object>) result.runtimeDiagnostics().get("transactionAuthorization");
+        assertThat(authorization).containsEntry("identityState", "IDENTIFIED")
+                .containsEntry("authenticated", false)
+                .containsEntry("decision", "DENIED")
+                .containsEntry("grantedCapabilities", List.of())
+                .doesNotContainValue(identifiedPatient.toString());
+    }
+
+    @Test
+    void verifiedVoiceGrantStillCannotExecuteTransactionsInPhaseTwoA() {
+        UUID patientId = UUID.randomUUID();
+        String callId = "verified-but-disabled";
+        var grant = new AivaTransactionAuthorization(AivaTransactionAuthorization.IdentityState.AUTHENTICATED,
+                patientId, AivaTransactionAuthorization.ActorType.VOICE_PATIENT, "real-app-user",
+                Set.of(AivaTransactionAuthorization.Capability.BOOK_APPOINTMENT,
+                        AivaTransactionAuthorization.Capability.VIEW_APPOINTMENTS,
+                        AivaTransactionAuthorization.Capability.CANCEL_APPOINTMENT,
+                        AivaTransactionAuthorization.Capability.RESCHEDULE_APPOINTMENT),
+                "VOICE_OTP", "OTP", java.time.Instant.now().plusSeconds(300), TENANT, callId);
+        AivaExecutionContext authenticatedVoiceContext = new AivaExecutionContext(TENANT, patientId, "VOICE", "hi-IN",
+                ZoneId.of("Asia/Kolkata"), callId, null, null, null,
+                Set.of("FIND_DOCTOR", "FIND_DOCTOR_SCHEDULE", "FIND_SLOTS"), callId,
+                "interaction-correlation", grant);
+        var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+
+        var result = adapter.continueTurn(authenticatedVoiceContext, "मेरा appointment book कर दीजिए",
+                (tool, context, input) -> { throw new AssertionError("Phase 2A.1 must not execute mutations"); });
+
+        assertThat(result.intent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(result.policyDecision()).isEqualTo("BLOCKED_READ_ONLY");
+        assertThat(result.mutationBlocked()).isTrue();
+        assertThat(result.toolExecuted()).isFalse();
+        assertThat(result.runtimeDiagnostics()).containsEntry("transactionExecutionEnabled", false);
     }
 
     @Test
@@ -210,7 +467,7 @@ class AivaV2VoiceConversationAdapterTest {
                     (tool, execution, input) -> { throw new AssertionError("booking must remain blocked"); });
 
             assertThat(first.tool()).isEqualTo("FIND_DOCTOR");
-            assertThat(second.intent()).isEqualTo("BOOK_APPOINTMENT");
+            assertThat(second.intent()).isEqualTo("CONSULT_DOCTOR");
             assertThat(second.mutationBlocked()).isTrue();
         }
     }
@@ -295,6 +552,62 @@ class AivaV2VoiceConversationAdapterTest {
     }
 
     @Test
+    void courtesyCloseWinsRepeatedlyDuringBookingAndPendingClarification() {
+        for (String phrase : List.of("Okay. Thank you.", "Okay. Thank you.", "No, thank you.",
+                "धन्यवाद", "ठीक है धन्यवाद", "बस धन्यवाद", "नहीं धन्यवाद",
+                "मुझे मदद नहीं चाहिए धन्यवाद", "thik hai thanks", "bas thank you", "nahi thanks",
+                "mujhe aur help nahi chahiye thanks")) {
+            String callId = "close-" + UUID.randomUUID();
+            var store = new AivaV2SessionStore(Clock.systemUTC());
+            SessionProjection pending = new SessionProjection(callId, null, TENANT.toString(),
+                    null, null, null, null, null, 1L, Instant.now().plusSeconds(1800))
+                    .withVoiceClarificationState(new AivaV2Models.VoiceClarificationState(
+                            AivaV2Models.VoiceClarificationKind.MISSING_INFO, 1,
+                            AivaV2Models.VoiceUnresolvedReason.MISSING_REQUIRED_INFO, List.of(),
+                            false, "BOOK_APPOINTMENT", "AWAIT_DATE"));
+            store.update("VOICE|" + TENANT + "|" + callId, ignored -> pending);
+            var adapter = new AivaV2VoiceConversationAdapter(store,
+                    mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+
+            assertThat(adapter.shouldRouteVoiceBookingTurn(context(callId), phrase))
+                    .as("courtesy close must bypass the booking execution boundary: %s", phrase).isFalse();
+            var result = adapter.continueTurn(context(callId), phrase,
+                    (tool, execution, input) -> { throw new AssertionError("courtesy close must not invoke tools"); });
+
+            assertThat(result.intent()).as("phrase=%s", phrase).isEqualTo("END_CONVERSATION");
+            assertThat(result.tool()).isNull();
+            assertThat(result.toolExecuted()).isFalse();
+            assertThat(store.find("VOICE|" + TENANT + "|" + callId).orElseThrow().closed()).isTrue();
+            var repeated = adapter.continueTurn(context(callId), phrase,
+                    (tool, execution, input) -> { throw new AssertionError("repeated close must not invoke tools"); });
+            assertThat(repeated.intent()).as("repeated phrase=%s", phrase).isEqualTo("END_CONVERSATION");
+            assertThat(repeated.toolExecuted()).isFalse();
+        }
+    }
+
+    @Test
+    void identifiedPatientBookingSubjectIsRetainedAcrossTurnsAndMismatchIsRejected() {
+        UUID patient = UUID.randomUUID();
+        String callId = "identified-patient-session";
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext identified = identifiedContext(callId, patient);
+
+        adapter.continueTurn(identified, "Which doctors are available?", (tool, execution, input) ->
+                new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 0, 0, "count=0", List.of()));
+        adapter.continueTurn(identified, "I need a doctor", (tool, execution, input) ->
+                new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 0, 0, "count=0", List.of()));
+
+        assertThat(store.find("VOICE|" + TENANT + "|" + callId).orElseThrow().patientId()).isEqualTo(patient);
+        var mismatch = adapter.continueTurn(identifiedContext(callId, UUID.randomUUID()), "I need a doctor",
+                (tool, execution, input) -> { throw new AssertionError("patient mismatch must stop before tools"); });
+        assertThat(mismatch.intent()).isEqualTo("PATIENT_BINDING_MISMATCH");
+        assertThat(mismatch.mutationBlocked()).isTrue();
+        assertThat(store.find("VOICE|" + TENANT + "|" + callId).orElseThrow().patientId()).isEqualTo(patient);
+    }
+
+    @Test
     void leavesGenericDoctorDiscoveryWithoutASpecialtyFilter() {
         AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
                 new AivaV2SessionStore(Clock.systemUTC()), mock(AivaV2ConversationDecisionGateway.class),
@@ -323,7 +636,7 @@ class AivaV2VoiceConversationAdapterTest {
                 (tool, execution, input) -> { throw new AssertionError("booking must remain blocked"); });
 
         assertThat(first.tool()).isEqualTo("FIND_DOCTOR");
-        assertThat(second.intent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(second.intent()).isEqualTo("CONSULT_DOCTOR");
         assertThat(second.mutationBlocked()).isTrue();
         assertThat(second.response()).contains("Ravi Mehta", "अपॉइंटमेंट बुक करना")
                 .doesNotContain("किस डॉक्टर");
@@ -391,9 +704,10 @@ class AivaV2VoiceConversationAdapterTest {
         adapter.continueTurn(context("slot-routing"), "रवि मेहता अवेलेबल हैं।",
                 (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
 
+        int phraseIndex = 0;
         for (String phrase : List.of("रवि मेहता के स्लॉट बताइए", "Ravi Mehta ke slots dikhao",
                 "Show me Ravi Mehta's available slots", "कल Ravi Mehta ke slots available hain?")) {
-            var result = adapter.continueTurn(context("slot-routing"), phrase,
+            var result = adapter.continueTurn(context("slot-routing-" + phraseIndex++), phrase,
                     (tool, execution, input) -> new AivaV2VoiceToolExecutor.ToolResult(
                             true, true, List.of(), 0, 0, "slots", List.of()));
             if (phrase.contains("कल")) {
@@ -406,9 +720,97 @@ class AivaV2VoiceConversationAdapterTest {
             }
         }
 
-        var generic = adapter.continueTurn(context("slot-routing"), "Which doctors are available?",
+        var generic = adapter.continueTurn(context("slot-routing-generic"), "Which doctors are available?",
                 (tool, execution, input) -> twoDoctors());
         assertThat(generic.tool()).isEqualTo("FIND_DOCTOR");
+    }
+
+    @Test
+    void pendingShowMoreClarificationConsumesYesAsSlotContinuationAndPreservesPageContext() {
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var context = context("pending-show-more");
+        String key = "VOICE|" + context.tenantId() + "|" + context.sessionId();
+        var availability = new AivaV2Models.AvailabilityResult(UUID.randomUUID(), null, 0,
+                "criteria", "doctor-amit", "doctor-id", null, LocalDate.now().plusDays(1), null, null,
+                context.timezone().getId(), List.of(new AivaV2Models.AvailabilitySlot("slot-1",
+                LocalTime.of(10, 0), LocalTime.of(10, 30), "10 AM")), "VOICE_SHOW_MORE", true,
+                java.time.Instant.now(), java.time.Instant.now().plusSeconds(300), 0, 1);
+        store.update(key, current -> new AivaV2Models.SessionProjection(context.sessionId(), null,
+                        context.tenantId().toString(), null, null, null, null, null,
+                        java.time.Instant.now().plusSeconds(1800))
+                .withVoiceAvailabilityResult(availability)
+                .withVoiceClarificationState(new AivaV2Models.VoiceClarificationState(
+                        AivaV2Models.VoiceClarificationKind.MISSING_INFO, 1,
+                        AivaV2Models.VoiceUnresolvedReason.MISSING_REQUIRED_INFO,
+                        List.of("choose_displayed_slot", "show_more"), false, "SHOW_MORE", "BOOKING")));
+
+        var called = new java.util.ArrayList<String>();
+        var result = adapter.continueTurn(context, "हाँ", (tool, execution, input) -> {
+            called.add(tool);
+            var nextPage = new AivaV2Models.AvailabilityResult(availability.requestId(), availability.draftId(),
+                    availability.draftRevision(), availability.criteriaFingerprint(), availability.providerHandle(),
+                    availability.doctorId(), availability.clinicId(), availability.date(), availability.timeWindow(),
+                    availability.availabilityTimeConstraint(), availability.timezone(), availability.slots(), null,
+                    false, availability.generatedAt(), availability.expiresAt(), 1, 1);
+            return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 1,
+                    "continued", List.of(), nextPage);
+        });
+
+        assertThat(called).containsExactly("FIND_SLOTS");
+        assertThat(result.intent()).isEqualTo("FIND_SLOTS");
+        var resumed = store.find(key).orElseThrow();
+        assertThat(resumed.voiceClarificationState()).isNull();
+        assertThat(resumed.latestAvailabilityResult().requestId()).isEqualTo(availability.requestId());
+        assertThat(resumed.latestAvailabilityResult().displayOffset()).isEqualTo(1);
+        assertThat(resumed.pendingConfirmation()).isNull();
+    }
+
+    @Test
+    void pendingShowMoreClarificationConsumesNoAndPreservesTheOriginalBookingContext() {
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var context = context("pending-show-more-no");
+        String key = "VOICE|" + context.tenantId() + "|" + context.sessionId();
+        var provider = new AivaV2Models.ProviderCandidate("amit", "amit", "doctor-amit", null,
+                context.tenantId().toString(), null, null, "Amit Verma", "General Medicine", "Clinic",
+                AivaV2Models.ProviderSource.CARE_PRIVATE,
+                new AivaV2Models.ProviderCapabilities(true, true, false, false, false, true, false));
+        var draft = new AivaV2Models.BookingDraft(UUID.randomUUID(), null, context.tenantId().toString(),
+                provider, null, LocalDate.now().plusDays(1), "EVENING", null,
+                UUID.randomUUID(), "selected-slot", AivaV2Models.DraftStatus.COLLECTING, 7,
+                java.time.Instant.now().plusSeconds(900), null);
+        var availability = new AivaV2Models.AvailabilityResult(draft.latestAvailabilityRequestId(),
+                draft.draftId(), draft.revision(), "criteria", provider.providerHandle(), provider.doctorId(), null,
+                draft.preferredDate(), "EVENING", null, context.timezone().getId(), List.of(
+                new AivaV2Models.AvailabilitySlot("selected-slot", LocalTime.of(18, 0),
+                        LocalTime.of(18, 30), "6 PM")), "VOICE_SHOW_MORE", true,
+                java.time.Instant.now(), java.time.Instant.now().plusSeconds(300), 0, 1);
+        store.update(key, current -> new AivaV2Models.SessionProjection(context.sessionId(), null,
+                        context.tenantId().toString(), null, null, null, null, null,
+                        java.time.Instant.now().plusSeconds(1800))
+                .withBookingDraft(draft)
+                .withActiveVoiceDoctor(provider)
+                .withVoiceAvailabilityResult(availability)
+                .withVoiceClarificationState(new AivaV2Models.VoiceClarificationState(
+                        AivaV2Models.VoiceClarificationKind.MISSING_INFO, 1,
+                        AivaV2Models.VoiceUnresolvedReason.MISSING_REQUIRED_INFO,
+                        List.of("choose_displayed_slot", "show_more"), false, "SHOW_MORE", "BOOKING")));
+
+        var result = adapter.continueTurn(context, "नहीं", (tool, execution, input) -> {
+            throw new AssertionError("declining SHOW_MORE must not invoke a tool");
+        });
+
+        assertThat(result.tool()).isNull();
+        assertThat(result.mutationBlocked()).isFalse();
+        var resumed = store.find(key).orElseThrow();
+        assertThat(resumed.tenantId()).isEqualTo(context.tenantId().toString());
+        assertThat(resumed.activeDraft()).isEqualTo(draft);
+        assertThat(resumed.activeVoiceDoctor()).isEqualTo(provider);
+        assertThat(resumed.latestAvailabilityResult()).isEqualTo(availability);
+        assertThat(resumed.voiceClarificationState()).isNull();
     }
 
     @Test
@@ -485,6 +887,40 @@ class AivaV2VoiceConversationAdapterTest {
     }
 
     @Test
+    void pendingReadOnlyDaypartMapsContextualShyamToEveningAndRetainsDateAndProvider() {
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var context = context("pending-daypart-shyam");
+        var fixedDate = LocalDate.now(context.timezone()).plusDays(2);
+        adapter.continueTurn(context, "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+        adapter.continueTurn(context, "परसों का स्लॉट बताओ", (tool, execution, input) -> {
+            var pending = new AivaV2Models.AvailabilityResult(UUID.randomUUID(), null, 0, "pending",
+                    "Ravi Mehta", "doctor-ravi", null, fixedDate, null, null, "Asia/Kolkata", List.of(),
+                    "VOICE_PENDING_DAYPART", false, java.time.Instant.now(),
+                    java.time.Instant.now().plusSeconds(300), 0, 3);
+            return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 0, 0, "pending daypart",
+                    List.of(), pending);
+        });
+
+        var captured = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
+        assertThat(adapter.shouldRouteVoiceBookingTurn(context, "Shyam.")).isFalse();
+        assertThat(adapter.shouldRouteVoiceBookingTurn(context, "शाम का")).isFalse();
+        var result = adapter.continueTurn(context, "Shyam.", (tool, execution, input) -> {
+            captured.set(input);
+            return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 1,
+                    "slotCount=1", List.of());
+        });
+
+        assertThat(result.tool()).isEqualTo("FIND_SLOTS");
+        assertThat(captured.get().queryType()).isEqualTo(QueryType.SLOT_AVAILABILITY);
+        assertThat(captured.get().daypart()).isEqualTo(NormalizedUserTurn.Daypart.EVENING);
+        assertThat(captured.get().date()).isEqualTo(fixedDate);
+        assertThat(captured.get().doctorId()).isEqualTo("doctor-ravi");
+    }
+
+    @Test
     void asksForDateInsteadOfSilentlyAssumingTomorrowAndCarriesDoctorContext() {
         var store = new AivaV2SessionStore(Clock.systemUTC());
         var adapter = new AivaV2VoiceConversationAdapter(store,
@@ -500,7 +936,7 @@ class AivaV2VoiceConversationAdapterTest {
         });
 
         assertThat(askDate.intent()).isEqualTo("CLARIFY_DATE");
-        assertThat(askDate.response()).contains("Aap kis din");
+        assertThat(askDate.response()).contains("किस दिन");
         assertThat(missedToolExecution).isFalse();
         assertThat(store.find("VOICE|" + TENANT + "|" + call).orElseThrow()
                 .latestAvailabilityResult().cursor()).isEqualTo("VOICE_PENDING_DATE");
@@ -520,7 +956,8 @@ class AivaV2VoiceConversationAdapterTest {
 
     @Test
     void carriesDateAndDaypartThroughShowMoreWithoutResettingPaging() {
-        var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
                 mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
         String call = "carry-page";
         adapter.continueTurn(context(call), "Ravi Mehta available हैं?",
@@ -551,17 +988,15 @@ class AivaV2VoiceConversationAdapterTest {
         assertThat(eveningInput.get().doctorId()).isEqualTo("doctor-ravi");
         assertThat(eveningInput.get().daypart()).isEqualTo(NormalizedUserTurn.Daypart.EVENING);
 
-        var moreInput = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
-        adapter.continueTurn(context(call), "और बताइए", (tool, execution, input) -> {
-            moreInput.set(input);
-            return slotPageResult(input, List.of(NormalizedUserTurn.Daypart.EVENING),
-                    List.of(slot(tomorrow, 17), slot(tomorrow, 17), slot(tomorrow, 17), slot(tomorrow, 18)),
-                    "VOICE_DAYPART:EVENING", input.pageOffset());
+        var more = adapter.continueTurn(context(call), "और बताइए", (tool, execution, input) -> {
+            throw new AssertionError("retained availability should paginate without a reload");
         });
-        assertThat(moreInput.get().doctorId()).isEqualTo("doctor-ravi");
-        assertThat(moreInput.get().date()).isEqualTo(tomorrow);
-        assertThat(moreInput.get().daypart()).isEqualTo(NormalizedUserTurn.Daypart.EVENING);
-        assertThat(moreInput.get().pageOffset()).isEqualTo(3);
+        assertThat(more.intent()).isEqualTo("SHOW_MORE_SLOTS");
+        var retained = store.find("VOICE|" + TENANT + "|" + call).orElseThrow().latestAvailabilityResult();
+        assertThat(retained.displayOffset()).isEqualTo(3);
+        assertThat(retained.doctorId()).isEqualTo("doctor-ravi");
+        assertThat(retained.date()).isEqualTo(tomorrow);
+        assertThat(retained.timeWindow()).isEqualTo("EVENING");
     }
 
     @Test
@@ -661,8 +1096,8 @@ class AivaV2VoiceConversationAdapterTest {
         var second = adapter.continueTurn(context("cross-turn-ambiguous"), "उनका appointment चाहिए.",
                 (tool, execution, input) -> { throw new AssertionError("ambiguous booking must not execute"); });
 
-        assertThat(second.intent()).isEqualTo("BOOK_APPOINTMENT");
-        assertThat(second.mutationBlocked()).isTrue();
+        assertThat(second.intent()).isEqualTo("CLARIFY_DOCTOR");
+        assertThat(second.mutationBlocked()).isFalse();
         assertThat(second.response()).contains("Ravi Mehta", "Amit Verma");
     }
 
@@ -675,9 +1110,9 @@ class AivaV2VoiceConversationAdapterTest {
         var result = adapter.continueTurn(context("cross-turn-none"), "उनका appointment चाहिए.",
                 (tool, execution, input) -> { throw new AssertionError("booking must not execute"); });
 
-        assertThat(result.intent()).isEqualTo("BOOK_APPOINTMENT");
-        assertThat(result.response()).contains("किस डॉक्टर");
-        assertThat(result.mutationBlocked()).isTrue();
+        assertThat(result.intent()).isEqualTo("CLARIFY_DOCTOR");
+        assertThat(result.response()).contains("kis doctor");
+        assertThat(result.mutationBlocked()).isFalse();
     }
 
     @Test
@@ -793,7 +1228,7 @@ class AivaV2VoiceConversationAdapterTest {
         var result = adapter.continueTurn(context(callId), "और बताइए",
                 (tool, execution, input) -> { throw new AssertionError("must choose a daypart before paging"); });
         assertThat(result.intent()).isEqualTo("CLARIFY_DAYPART");
-        assertThat(result.response()).contains("सुबह", "शाम");
+        assertThat(result.response()).contains("morning", "evening");
         assertThat(store.find("VOICE|" + TENANT + "|" + callId).orElseThrow()
                 .latestAvailabilityResult().cursor()).isEqualTo("VOICE_PENDING_DAYPART");
     }
@@ -834,17 +1269,18 @@ class AivaV2VoiceConversationAdapterTest {
         String callId = "tomorrow-availability-selected";
         var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                 mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
-        adapter.continueTurn(context(callId), "Is Ravi Mehta available?",
+        AivaExecutionContext bookingContext = context(callId);
+        adapter.continueTurn(bookingContext, "Is Ravi Mehta available?",
                 (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
         var input = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
-        var result = adapter.continueTurn(context(callId), "कल availability बताइए", (tool, execution, toolInput) -> {
+        var result = adapter.continueTurn(bookingContext, "कल availability बताइए", (tool, execution, toolInput) -> {
             input.set(toolInput);
             return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 1, "availability", List.of());
         });
         assertThat(result.tool()).isEqualTo("FIND_SLOTS");
         assertThat(input.get().queryType()).isEqualTo(QueryType.EFFECTIVE_DATE_AVAILABILITY);
         assertThat(input.get().doctorId()).isEqualTo("doctor-ravi");
-        assertThat(input.get().date()).isEqualTo(LocalDate.now().plusDays(1));
+        assertThat(input.get().date()).isEqualTo(LocalDate.now(bookingContext.timezone()).plusDays(1));
 
         var noContext = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                 mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults())
@@ -903,9 +1339,9 @@ class AivaV2VoiceConversationAdapterTest {
     @Test
     void blocksCancelAndRescheduleWithIntentSpecificResponsesAcrossLanguages() {
         for (String[] sample : new String[][]{
-                {"hi-IN", "मेरा अपॉइंटमेंट कैंसिल करना है", "CANCEL_APPOINTMENT", "कैंसिल"},
-                {"hi-IN", "मेरा appointment cancel करना है", "CANCEL_APPOINTMENT", "कैंसिल"},
-                {"hi-IN", "appointment रद्द करना है", "CANCEL_APPOINTMENT", "कैंसिल"},
+                {"hi-IN", "मेरा अपॉइंटमेंट कैंसिल करना है", "CANCEL_APPOINTMENT", "रद्द"},
+                {"hi-IN", "मेरा appointment cancel करना है", "CANCEL_APPOINTMENT", "care"},
+                {"hi-IN", "appointment रद्द करना है", "CANCEL_APPOINTMENT", "care"},
                 {"hi-IN", "appointment cancel karna hai", "CANCEL_APPOINTMENT", "cancel"},
                 {"hi-IN", "meri booking cancel karni hai", "CANCEL_APPOINTMENT", "cancel"},
                 {"en-IN", "cancel my appointment", "CANCEL_APPOINTMENT", "cancellation"},
@@ -925,24 +1361,33 @@ class AivaV2VoiceConversationAdapterTest {
 
     @Test
     void blockedAppointmentLookupHasItsOwnReadOnlyResponse() {
-        var result = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
-                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults())
-                .continueTurn(context("blocked-appointment-lookup", "en-IN"), "Show my appointments",
-                        (tool, execution, input) -> { throw new AssertionError("appointment lookup stays blocked"); });
-        assertThat(result.intent()).isEqualTo("FIND_APPOINTMENTS");
-        assertThat(result.mutationBlocked()).isTrue();
-        assertThat(result.response()).contains("Appointment lookup").doesNotContain("booking");
+        for (String[] sample : new String[][]{
+                {"hi-IN", "मेरी कल की appointment क्या है?"},
+                {"hi-IN", "क्या मेरी Ravi के साथ appointment booked है?"},
+                {"en-IN", "show my upcoming appointments"},
+                {"en-IN", "Is my appointment with Ravi booked?"}}) {
+            var result = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+                    mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults())
+                    .continueTurn(context("blocked-appointment-lookup-" + sample[1].hashCode(), sample[0]), sample[1],
+                            (tool, execution, input) -> { throw new AssertionError("appointment lookup stays blocked"); });
+            assertThat(result.intent()).as(sample[1]).isEqualTo("FIND_APPOINTMENTS");
+            assertThat(result.mutationBlocked()).as(sample[1]).isTrue();
+            assertThat(result.response()).as(sample[1]).contains("Care");
+        }
     }
 
     @Test
     void appointmentPossibilityWithKnownDoctorRoutesToDateSpecificAvailability() {
         for (String phrase : List.of("कल इनका appointment मिल सकता है क्या?",
-                "kal appointment mil sakta hai?", "Can I get an appointment tomorrow?")) {
+                "kal appointment mil sakta hai?", "Can I get an appointment tomorrow?",
+                "Ravi ke saath kal appointment mil sakta hai?",
+                "कल Ravi का appointment available है?",
+                "Can I get an appointment with Ravi tomorrow?")) {
             var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                     mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
             String call = "appointment-possibility-" + phrase.hashCode();
-            adapter.continueTurn(context(call), "Is Amit Verma available?",
-                    (tool, execution, input) -> singleDoctor("doctor-amit", "Amit Verma", "General Medicine"));
+            adapter.continueTurn(context(call), "Is Ravi Mehta available?",
+                    (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
             var captured = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
             var result = adapter.continueTurn(context(call), phrase, (tool, execution, input) -> {
                 captured.set(input);
@@ -952,7 +1397,7 @@ class AivaV2VoiceConversationAdapterTest {
             assertThat(result.intent()).as(phrase).isEqualTo("FIND_SLOTS");
             assertThat(result.tool()).as(phrase).isEqualTo("FIND_SLOTS");
             assertThat(result.mutationBlocked()).as(phrase).isFalse();
-            assertThat(captured.get().doctorId()).as(phrase).isEqualTo("doctor-amit");
+            assertThat(captured.get().doctorId()).as(phrase).isEqualTo("doctor-ravi");
             assertThat(captured.get().date()).as(phrase)
                     .isEqualTo(LocalDate.now(context(call).timezone()).plusDays(1));
         }
@@ -1035,7 +1480,7 @@ class AivaV2VoiceConversationAdapterTest {
         assertThat(dateQuestion.intent()).isEqualTo("CLARIFY_DATE");
 
         var input = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
-        var resumed = adapter.continueTurn(context(call), "22nd date", (tool, execution, toolInput) -> {
+        var resumed = adapter.continueTurn(context(call), "22 October 2026", (tool, execution, toolInput) -> {
             input.set(toolInput);
             return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 1, "slots", List.of());
         });
@@ -1047,7 +1492,7 @@ class AivaV2VoiceConversationAdapterTest {
 
     @Test
     void pendingDateConsumesAbsoluteHindiAndEnglishDatesButExplicitScheduleOverridesIt() {
-        for (String phrase : List.of("22 अक्टूबर 2026 का", "22nd October")) {
+        for (String phrase : List.of("22 अक्टूबर 2026 का", "22nd October 2026")) {
             var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                     mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
             String call = "absolute-date-continuation-" + phrase.hashCode();
@@ -1125,9 +1570,9 @@ class AivaV2VoiceConversationAdapterTest {
     @Test
     void absoluteDateAnswerRetainsDoctorForHindiEnglishAndHinglishSlotClarifications() {
         for (String[] sample : new String[][]{
-                {"hi-IN", "डॉक्टर रवि मेहता का स्लॉट बताइए", "26 अक्टूबर 2026"},
-                {"en-IN", "Show Ravi Mehta's slots", "October 26, 2026"},
-                {"hi-IN", "Ravi ke slots dikhao", "26 October"}}) {
+                {"hi-IN", "डॉक्टर रवि मेहता का स्लॉट बताइए", "28 अक्टूबर 2026"},
+                {"en-IN", "Show Ravi Mehta's slots", "October 28, 2026"},
+                {"hi-IN", "Ravi ke slots dikhao", "28 October"}}) {
             var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                     mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
             String call = "absolute-date-keeps-doctor-" + sample[1].hashCode();
@@ -1144,7 +1589,7 @@ class AivaV2VoiceConversationAdapterTest {
             });
             assertThat(resumed.tool()).as(sample[2]).isEqualTo("FIND_SLOTS");
             assertThat(captured.get().doctorId()).as(sample[2]).isEqualTo("doctor-ravi");
-            assertThat(captured.get().date()).as(sample[2]).isEqualTo(LocalDate.of(2026, 10, 26));
+            assertThat(captured.get().date()).as(sample[2]).isEqualTo(LocalDate.of(2026, 10, 28));
         }
     }
 
@@ -1152,7 +1597,7 @@ class AivaV2VoiceConversationAdapterTest {
     void actionableDateOrDaypartOverridesNegativePendingAvailabilityContinuation() {
         for (String[] sample : new String[][]{
                 {"नहीं, आप परसों का बताइए", "PARSON", "null"},
-                {"कल नहीं, 22 October का बताइए", "2026-10-22", "null"},
+                {"कल नहीं, 22 October 2026 का बताइए", "2026-10-22", "null"},
                 {"नहीं, शाम का बताइए", null, "EVENING"}}) {
             var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                     mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
@@ -1322,7 +1767,7 @@ class AivaV2VoiceConversationAdapterTest {
         var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                 mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
         String call = "appointment-clarification-retains-context";
-        var clarification = adapter.continueTurn(context(call), "Doctor Ravi Mehta's appointment on October 26, 2026",
+        var clarification = adapter.continueTurn(context(call), "Doctor Ravi Mehta's appointment on October 28, 2026",
                 (tool, execution, input) -> { throw new AssertionError("bounded clarification must not execute a tool"); });
         assertThat(clarification.intent()).isEqualTo("CLARIFY_APPOINTMENT_INTENT");
 
@@ -1339,7 +1784,7 @@ class AivaV2VoiceConversationAdapterTest {
         var bookingAdapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                 mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
         String bookingCall = "appointment-clarification-blocked-booking";
-        bookingAdapter.continueTurn(context(bookingCall), "Doctor Ravi Mehta's appointment on October 26, 2026",
+        bookingAdapter.continueTurn(context(bookingCall), "Doctor Ravi Mehta's appointment on October 28, 2026",
                 (tool, execution, input) -> { throw new AssertionError("clarification must not execute a tool"); });
         var blocked = bookingAdapter.continueTurn(context(bookingCall), "book करना है",
                 (tool, execution, input) -> { throw new AssertionError("booking remains blocked"); });
@@ -1347,7 +1792,7 @@ class AivaV2VoiceConversationAdapterTest {
         assertThat(blocked.policyDecision()).isEqualTo("BLOCKED_READ_ONLY");
         var next = bookingAdapter.continueTurn(context(bookingCall), "slots बताइए", (tool, execution, input) -> {
             assertThat(input.query()).contains("Ravi Mehta");
-            assertThat(input.date()).isEqualTo(LocalDate.of(2026, 10, 26));
+            assertThat(input.date()).isEqualTo(LocalDate.of(2026, 10, 28));
             return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 1, "slots", List.of());
         });
         assertThat(next.intent()).isEqualTo("FIND_SLOTS");
@@ -1358,8 +1803,8 @@ class AivaV2VoiceConversationAdapterTest {
             String cursor, int offset) {
         return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), slots.size(), slots.size(), "slots",
                 List.of(), new AivaV2Models.AvailabilityResult(UUID.randomUUID(), null, 0, "voice", "Ravi Mehta",
-                        "doctor-ravi", null, date, daypart == null ? null : daypart.name(), null,
-                        input.timezone().getId(), slots, cursor, false, java.time.Instant.now(),
+                        "doctor-ravi", null, date, daypart == null ? null : daypart.name(),
+                        input.availabilityTimeConstraint(), input.timezone().getId(), slots, cursor, false, java.time.Instant.now(),
                         java.time.Instant.now().plusSeconds(300), offset, 3));
     }
 
@@ -1376,6 +1821,364 @@ class AivaV2VoiceConversationAdapterTest {
                                 "doctor-ravi", "Ravi Mehta", "Pediatrics", null, TENANT.toString(), null, null),
                         new AivaV2VoiceToolExecutor.ProviderOption(
                                 "doctor-amit", "Amit Verma", "General Medicine", null, TENANT.toString(), null, null)));
+    }
+
+    @Test
+    void repeatedUnknownTurnsEscalateInSessionAfterTwoFocusedClarifications() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("bounded-unknown");
+        String key = "VOICE|" + TENANT + "|bounded-unknown";
+
+        var first = adapter.continueTurn(context, "अजीब बात बताइए", (tool, execution, input) -> {
+            throw new AssertionError("unknown request must not execute a tool");
+        });
+        var firstState = store.find(key).orElseThrow().voiceClarificationState();
+        assertThat(first.intent()).isEqualTo("UNKNOWN");
+        assertThat(first.response()).contains("डॉक्टर", "slots", "clinic");
+        assertThat(firstState.attemptCount()).isEqualTo(1);
+        assertThat(firstState.escalationDecision()).isFalse();
+
+        var second = adapter.continueTurn(context, "अजीब बात बताइए", (tool, execution, input) -> {
+            throw new AssertionError("repeated unknown request must not execute a tool");
+        });
+        assertThat(second.intent()).isEqualTo("UNKNOWN");
+        assertThat(store.find(key).orElseThrow().voiceClarificationState().attemptCount()).isEqualTo(2);
+
+        var third = adapter.continueTurn(context, "अजीब बात बताइए", (tool, execution, input) -> {
+            throw new AssertionError("escalation decision must not execute a tool");
+        });
+        var escalated = store.find(key).orElseThrow().voiceClarificationState();
+        assertThat(third.intent()).isEqualTo("ESCALATION_DECISION");
+        assertThat(third.response()).contains("व्यक्ति", "कोशिश");
+        assertThat(escalated.attemptCount()).isEqualTo(2);
+        assertThat(escalated.unresolvedReason())
+                .isEqualTo(AivaV2Models.VoiceUnresolvedReason.REPEATED_CLARIFICATION_FAILURE);
+        assertThat(escalated.escalationDecision()).isTrue();
+    }
+
+    @Test
+    void unsupportedInsuranceRequestUsesBoundedRecoveryInsteadOfDoctorDiscovery() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("unsupported-insurance");
+        String key = "VOICE|" + TENANT + "|unsupported-insurance";
+        String utterance = "मुझे इंश्योरेंस क्लेम के बारे में जानकारी चाहिए।";
+        adapter.continueTurn(context, "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+
+        var first = adapter.continueTurn(context, utterance, (tool, execution, input) -> {
+            throw new AssertionError("unsupported insurance request must not invoke a healthcare tool");
+        });
+        var firstState = store.find(key).orElseThrow().voiceClarificationState();
+        assertThat(first.intent()).isEqualTo("UNKNOWN");
+        assertThat(first.tool()).isNull();
+        assertThat(firstState.unresolvedReason()).isEqualTo(AivaV2Models.VoiceUnresolvedReason.UNSUPPORTED_REQUEST);
+        assertThat(firstState.attemptCount()).isEqualTo(1);
+        assertThat(firstState.escalationDecision()).isFalse();
+        assertThat(store.find(key).orElseThrow().activeVoiceDoctor().displayName()).isEqualTo("Ravi Mehta");
+
+        var second = adapter.continueTurn(context, utterance, (tool, execution, input) -> {
+            throw new AssertionError("repeated unsupported request must not invoke a tool");
+        });
+        assertThat(second.intent()).isEqualTo("UNKNOWN");
+        assertThat(second.response()).isNotEqualTo(first.response());
+        assertThat(store.find(key).orElseThrow().voiceClarificationState().attemptCount()).isEqualTo(2);
+
+        var third = adapter.continueTurn(context, utterance, (tool, execution, input) -> {
+            throw new AssertionError("escalation decision must not invoke a tool");
+        });
+        var escalated = store.find(key).orElseThrow().voiceClarificationState();
+        assertThat(third.intent()).isEqualTo("ESCALATION_DECISION");
+        assertThat(third.response()).doesNotContain("call", "कॉल करेगा", "कॉल आएगा");
+        assertThat(escalated.unresolvedReason())
+                .isEqualTo(AivaV2Models.VoiceUnresolvedReason.REPEATED_CLARIFICATION_FAILURE);
+        assertThat(escalated.escalationDecision()).isTrue();
+        assertThat(store.find(key).orElseThrow().activeVoiceDoctor().displayName()).isEqualTo("Ravi Mehta");
+    }
+
+    @Test
+    void unsupportedRequestsDoNotBecomeDoctorSearchesButProviderEvidenceStillDoes() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        for (String utterance : List.of("insurance claim ke bare mein bataiye", "billing kaise hoti hai?",
+                "parking available hai?", "mujhe complaint karni hai")) {
+            String call = "unsupported-" + utterance.hashCode();
+            var result = adapter.continueTurn(context(call), utterance,
+                    (tool, execution, input) -> { throw new AssertionError("must not select a tool: " + utterance); });
+            assertThat(result.intent()).as(utterance).isEqualTo("UNKNOWN");
+            assertThat(result.tool()).as(utterance).isNull();
+            assertThat(store.find("VOICE|" + TENANT + "|" + call).orElseThrow()
+                    .voiceClarificationState().unresolvedReason()).isEqualTo(
+                            AivaV2Models.VoiceUnresolvedReason.UNSUPPORTED_REQUEST);
+        }
+
+        for (String utterance : List.of("बच्चों का डॉक्टर है?", "Dr Ravi Mehta available हैं?",
+                "cardiologist hai?", "skin doctor hai?")) {
+            var toolInput = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
+            var result = adapter.continueTurn(context("provider-evidence-" + utterance.hashCode()), utterance,
+                    (tool, execution, input) -> {
+                        toolInput.set(input);
+                        return new AivaV2VoiceToolExecutor.ToolResult(
+                                true, true, List.of(), 0, 2, "no matching doctors", List.of());
+                    });
+            assertThat(result.intent()).as(utterance).isEqualTo("FIND_DOCTOR");
+            assertThat(result.tool()).as(utterance).isEqualTo("FIND_DOCTOR");
+            if (utterance.startsWith("cardiologist")) assertThat(toolInput.get().speciality()).isEqualTo("Cardiology");
+            if (utterance.startsWith("skin doctor")) assertThat(toolInput.get().speciality()).isEqualTo("Dermatology");
+        }
+    }
+
+    @Test
+    void explicitAmitBookingOverridesActiveRaviWhileMutationRemainsBlocked() {
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var context = context("explicit-amit-booking-override");
+        adapter.continueTurn(context, "बच्चों का डॉक्टर available है?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+
+        var booking = adapter.continueTurn(context, "मुझे अमित वर्मा का अपॉइंटमेंट चाहिए।", (tool, execution, input) -> {
+            assertThat(tool).isEqualTo("FIND_DOCTOR");
+            assertThat(DoctorNameNormalizer.matches("Amit Verma", input.query())).as(input.query()).isTrue();
+            return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 2, "one match",
+                    List.of(new AivaV2VoiceToolExecutor.ProviderOption("doctor-amit", "Amit Verma",
+                            "General Medicine", null, TENANT.toString(), null, null)));
+        });
+
+        assertThat(booking.intent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(booking.policyDecision()).isEqualTo("BLOCKED_READ_ONLY");
+        assertThat(booking.toolExecuted()).isFalse();
+        assertThat(booking.response()).contains("Amit Verma").doesNotContain("Ravi Mehta");
+        assertThat(store.find("VOICE|" + TENANT + "|explicit-amit-booking-override").orElseThrow()
+                .activeVoiceDoctor().displayName()).isEqualTo("Amit Verma");
+        assertThat(booking.runtimeDiagnostics()).containsEntry("responseSource", "BLOCKED_TRANSACTION_RESPONSE");
+    }
+
+    @Test
+    void wordAndNumericHindiDateOverridePriorAvailabilityDateAndAreObservable() {
+        for (String phrase : List.of("पाँच नवंबर 2026 का स्लॉट बताइए", "5 नवंबर 2026 का स्लॉट बताइए")) {
+            var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+                    mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+            String call = "november-date-override-" + phrase.hashCode();
+            adapter.continueTurn(context(call), "Ravi Mehta available हैं?",
+                    (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+            adapter.continueTurn(context(call), "Ravi Mehta के slots 22 अक्टूबर 2026 बताइए",
+                    (tool, execution, input) -> availabilityResult(input, LocalDate.of(2026, 10, 22), null,
+                            List.of(slot(LocalDate.of(2026, 10, 22), 9)), "VOICE_PENDING_DAYPART", 0));
+
+            var effective = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
+            var result = adapter.continueTurn(context(call), phrase, (tool, execution, input) -> {
+                effective.set(input);
+                return availabilityResult(input, LocalDate.of(2026, 11, 5), null,
+                        List.of(slot(LocalDate.of(2026, 11, 5), 9)), "VOICE_PENDING_DAYPART", 0);
+            });
+
+            assertThat(effective.get().date()).as(phrase).isEqualTo(LocalDate.of(2026, 11, 5));
+            assertThat(result.runtimeDiagnostics()).containsEntry("explicitDate", "2026-11-05")
+                    .containsEntry("effectiveDate", "2026-11-05")
+                    .containsEntry("temporalSource", "CURRENT_TURN")
+                    .containsEntry("dateOverrideApplied", true);
+        }
+    }
+
+    @Test
+    void slotTimeRangeIsPassedAsCanonicalSlotFilterConstraint() {
+        var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        String call = "range-observability";
+        adapter.continueTurn(context(call), "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+        var captured = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
+        var result = adapter.continueTurn(context(call),
+                "Ravi Mehta कल चार से छह के बीच स्लॉट available है?", (tool, execution, input) -> {
+                    captured.set(input);
+                    return availabilityResult(input, input.date(), input.daypart(), List.of(), "VOICE_CONTEXT", 0);
+                });
+
+        assertThat(result.intent()).isEqualTo("FIND_SLOTS");
+        assertThat(captured.get().availabilityTimeConstraint().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.BETWEEN);
+        assertThat(captured.get().availabilityTimeConstraint().startTime()).isEqualTo(LocalTime.of(16, 0));
+        assertThat(captured.get().availabilityTimeConstraint().endTime()).isEqualTo(LocalTime.of(18, 0));
+        assertThat(result.runtimeDiagnostics()).containsEntry("parsedTimeRange", "16:00-18:00");
+    }
+
+    @Test
+    void explicitAmitDateAndExactTimeOverrideActiveRaviForSlotLookup() {
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var context = context("amit-exact-time-override");
+        adapter.continueTurn(context, "Which doctors are available?", (tool, execution, input) -> twoDoctors());
+        adapter.continueTurn(context, "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+        var captured = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
+
+        var result = adapter.continueTurn(context,
+                "Actually Amit Verma कल शाम 6 बजे का स्लॉट बताइए", (tool, execution, input) -> {
+                    captured.set(input);
+                    var slot = new AivaV2Models.AvailabilitySlot(null, LocalTime.of(18, 0),
+                            LocalTime.of(18, 30), "18:00");
+                    var availability = new AivaV2Models.AvailabilityResult(UUID.randomUUID(), null, 0,
+                            "voice-exact", "Amit Verma", "doctor-amit", null, input.date(), "EVENING",
+                            input.availabilityTimeConstraint(), input.timezone().getId(), List.of(slot),
+                            "VOICE_EXACT_SLOT_CANDIDATE", false, java.time.Instant.now(),
+                            java.time.Instant.now().plusSeconds(300), 0, 3);
+                    return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 1,
+                            "exact slot candidate", List.of(new AivaV2VoiceToolExecutor.ProviderOption(
+                                    "doctor-amit", "Amit Verma", "General Medicine", null,
+                                    TENANT.toString(), null, null)), availability);
+                });
+
+        assertThat(result.tool()).isEqualTo("FIND_SLOTS");
+        assertThat(captured.get().query()).isEqualTo("Amit Verma");
+        assertThat(captured.get().date()).isEqualTo(LocalDate.now(context.timezone()).plusDays(1));
+        assertThat(captured.get().availabilityTimeConstraint().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.EXACT);
+        assertThat(captured.get().availabilityTimeConstraint().startTime()).isEqualTo(LocalTime.of(18, 0));
+        assertThat(store.find("VOICE|" + TENANT + "|amit-exact-time-override").orElseThrow()
+                .activeVoiceDoctor().displayName()).isEqualTo("Amit Verma");
+    }
+
+    @Test
+    void exactTimeConstraintSurvivesDateClarificationAndIsSentWithResolvedDate() {
+        var store = new AivaV2SessionStore(Clock.systemUTC());
+        var adapter = new AivaV2VoiceConversationAdapter(store,
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var context = context("exact-time-date-clarification");
+        adapter.continueTurn(context, "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+        var asksDate = adapter.continueTurn(context, "Ravi Mehta शाम 6 बजे का slot दिखाइए",
+                (tool, execution, input) -> { throw new AssertionError("date is missing; no slot query yet"); });
+
+        assertThat(asksDate.intent()).isEqualTo("CLARIFY_DATE");
+        assertThat(store.find("VOICE|" + TENANT + "|exact-time-date-clarification").orElseThrow()
+                .latestAvailabilityResult().availabilityTimeConstraint().startTime()).isEqualTo(LocalTime.of(18, 0));
+
+        var resumed = new java.util.concurrent.atomic.AtomicReference<AivaV2VoiceToolExecutor.ToolInput>();
+        var result = adapter.continueTurn(context, "कल", (tool, execution, input) -> {
+            resumed.set(input);
+            return availabilityResult(input, input.date(), null, List.of(), "VOICE_CONTEXT", 0);
+        });
+        assertThat(result.tool()).isEqualTo("FIND_SLOTS");
+        assertThat(resumed.get().date()).isEqualTo(LocalDate.now(context.timezone()).plusDays(1));
+        assertThat(resumed.get().availabilityTimeConstraint().mode())
+                .isEqualTo(AivaV2Models.AvailabilityTimeConstraintMode.EXACT);
+        assertThat(resumed.get().availabilityTimeConstraint().startTime()).isEqualTo(LocalTime.of(18, 0));
+    }
+
+    @Test
+    void contextualWhichDoctorOwnsTheseSlotsUsesActiveDoctorWithoutSearchingAgain() {
+        var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var context = context("which-doctor-owns-slots");
+        adapter.continueTurn(context, "Dr Amit Verma available है?",
+                (tool, execution, input) -> singleDoctor("doctor-amit", "Amit Verma", "General Medicine"));
+
+        var answer = adapter.continueTurn(context, "ये कौन से डॉक्टर का स्लॉट है?",
+                (tool, execution, input) -> { throw new AssertionError("context answer must not call a tool"); });
+
+        assertThat(answer.intent()).isEqualTo("ANSWER_PROVIDER_CONTEXT");
+        assertThat(answer.tool()).isNull();
+        assertThat(answer.response()).contains("Amit Verma");
+        assertThat(answer.runtimeDiagnostics()).containsEntry("responseSource", "DETERMINISTIC_VOICE_ADAPTER");
+    }
+
+    @Test
+    void runtimeDiagnosticsContainNoCallerOrPatientIdentifiers() {
+        var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
+                mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        var result = adapter.continueTurn(context("diagnostic-privacy"), "कौन सा डॉक्टर available है?",
+                (tool, execution, input) -> new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 0, 2,
+                        "no result", List.of()));
+        assertThat(result.runtimeDiagnostics().keySet()).noneMatch(key -> key.toLowerCase().contains("phone")
+                || key.toLowerCase().contains("patient"));
+    }
+
+    @Test
+    void ambiguousDoctorClarificationOffersBoundedCandidatesAndSelectionClearsRecovery() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("bounded-doctor");
+        String key = "VOICE|" + TENANT + "|bounded-doctor";
+        adapter.continueTurn(context, "Which doctors are available?", (tool, execution, input) -> twoDoctors());
+
+        var clarification = adapter.continueTurn(context, "उनका sitting time क्या है?",
+                (tool, execution, input) -> { throw new AssertionError("ambiguous doctor must not execute"); });
+        var pending = store.find(key).orElseThrow();
+        assertThat(clarification.intent()).isEqualTo("CLARIFY_DOCTOR");
+        assertThat(clarification.response()).contains("Ravi Mehta", "Amit Verma");
+        assertThat(pending.voiceClarificationState().candidateOptions()).hasSizeBetween(1, 3);
+
+        var selected = adapter.continueTurn(context, "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+        var resolved = store.find(key).orElseThrow();
+        assertThat(selected.tool()).isEqualTo("FIND_DOCTOR");
+        assertThat(resolved.voiceClarificationState()).isNull();
+        assertThat(resolved.activeVoiceDoctor().displayName()).isEqualTo("Ravi Mehta");
+    }
+
+    @Test
+    void unrelatedClarificationPreservesActiveVoiceDoctor() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("doctor-survives-clarification");
+        String key = "VOICE|" + TENANT + "|doctor-survives-clarification";
+        adapter.continueTurn(context, "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+
+        adapter.continueTurn(context, "अजीब बात बताइए", (tool, execution, input) -> {
+            throw new AssertionError("unresolved turn must not execute a tool");
+        });
+
+        var session = store.find(key).orElseThrow();
+        assertThat(session.activeVoiceDoctor().displayName()).isEqualTo("Ravi Mehta");
+        assertThat(session.voiceClarificationState().kind()).isEqualTo(AivaV2Models.VoiceClarificationKind.UNSUPPORTED);
+    }
+
+    @Test
+    void directHumanRequestImmediatelyRecordsEscalationWithoutToolExecution() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("caller-human", "en-IN");
+
+        var result = adapter.continueTurn(context, "I want to talk to someone",
+                (tool, execution, input) -> { throw new AssertionError("human request must not execute a tool"); });
+        var state = store.find("VOICE|" + TENANT + "|caller-human").orElseThrow().voiceClarificationState();
+
+        assertThat(result.intent()).isEqualTo("ESCALATION_DECISION");
+        assertThat(result.response()).contains("try to get a person");
+        assertThat(state.unresolvedReason()).isEqualTo(AivaV2Models.VoiceUnresolvedReason.CALLER_REQUESTED_HUMAN);
+        assertThat(state.escalationDecision()).isTrue();
+    }
+
+    @Test
+    void successfulToolAndEndSessionClearVoiceRecoveryState() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        AivaExecutionContext context = context("recovery-reset");
+        String key = "VOICE|" + TENANT + "|recovery-reset";
+        adapter.continueTurn(context, "अजीब बात बताइए", (tool, execution, input) -> {
+            throw new AssertionError("unknown request must not execute a tool");
+        });
+        var resolved = adapter.continueTurn(context, "Ravi Mehta available हैं?",
+                (tool, execution, input) -> singleDoctor("doctor-ravi", "Ravi Mehta", "Pediatrics"));
+        assertThat(resolved.tool()).isEqualTo("FIND_DOCTOR");
+        assertThat(store.find(key).orElseThrow().voiceClarificationState()).isNull();
+
+        adapter.continueTurn(context, "अजीब बात बताइए", (tool, execution, input) -> {
+            throw new AssertionError("unknown request must not execute a tool");
+        });
+        adapter.endSession(context);
+        assertThat(store.find(key)).isEmpty();
     }
 
     private static AivaV2VoiceToolExecutor.ToolResult slotPageResult(AivaV2VoiceToolExecutor.ToolInput input,
@@ -1408,6 +2211,11 @@ class AivaV2VoiceConversationAdapterTest {
 
     private static AivaExecutionContext context(String callId, String language) {
         return new AivaExecutionContext(TENANT, null, "VOICE", language, ZoneId.of("Asia/Kolkata"),
+                callId, null, null, null, Set.of("FIND_DOCTOR", "FIND_DOCTOR_SCHEDULE", "FIND_SLOTS"));
+    }
+
+    private static AivaExecutionContext identifiedContext(String callId, UUID patientId) {
+        return new AivaExecutionContext(TENANT, patientId, "VOICE", "hi-IN", ZoneId.of("Asia/Kolkata"),
                 callId, null, null, null, Set.of("FIND_DOCTOR", "FIND_DOCTOR_SCHEDULE", "FIND_SLOTS"));
     }
 }

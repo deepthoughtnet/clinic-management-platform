@@ -30,6 +30,35 @@ class AivaV2TemporalNormalizerTest {
     }
 
     @Test
+    void relativeDateUsesExplicitTenantZoneAcrossUtcDateBoundary() {
+        AivaV2TemporalNormalizer tenantZoneNormalizer = new AivaV2TemporalNormalizer(
+                Clock.fixed(Instant.parse("2026-09-11T20:00:00Z"), ZoneOffset.UTC),
+                ZoneId.of("Asia/Kolkata"));
+
+        var tomorrow = tenantZoneNormalizer.normalize("tomorrow", ValuePatch.unchanged(), null);
+
+        assertThat(tomorrow.localDate()).isEqualTo(LocalDate.of(2026, 9, 13));
+    }
+
+    @Test
+    void tomorrowUsesBookingZoneBeforeAndAfterKolkataMidnightRegardlessOfJvmZone() {
+        ZoneId kolkata = ZoneId.of("Asia/Kolkata");
+        AivaV2TemporalNormalizer beforeLocalMidnight = new AivaV2TemporalNormalizer(
+                Clock.fixed(Instant.parse("2026-10-25T18:29:00Z"), ZoneOffset.UTC), kolkata);
+        AivaV2TemporalNormalizer afterLocalMidnight = new AivaV2TemporalNormalizer(
+                Clock.fixed(Instant.parse("2026-10-25T18:31:00Z"), ZoneOffset.UTC), kolkata);
+        AivaV2TemporalNormalizer utc = new AivaV2TemporalNormalizer(
+                Clock.fixed(Instant.parse("2026-10-25T18:31:00Z"), ZoneOffset.UTC), ZoneOffset.UTC);
+
+        assertThat(beforeLocalMidnight.normalize("कल", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 26));
+        assertThat(afterLocalMidnight.normalize("कल", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 27));
+        assertThat(utc.normalize("tomorrow", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 26));
+    }
+
+    @Test
     void resolvesSupportedAbsoluteDateForms() {
         assertThat(normalizer.normalize("14.09.2026", ValuePatch.set("14.09.2026"), null).localDate())
                 .isEqualTo(LocalDate.of(2026, 9, 14));
@@ -49,6 +78,31 @@ class AivaV2TemporalNormalizerTest {
                 .isEqualTo(LocalDate.of(2027, 9, 9));
         assertThat(normalizer.normalize("2026-09-12", ValuePatch.set("2026-09-12"), null).localDate())
                 .isEqualTo(LocalDate.of(2026, 9, 12));
+    }
+
+    @Test
+    void resolvesSpokenHindiWeekdayToNextOccurrenceAndOverridesSessionDate() {
+        AivaV2TemporalNormalizer octoberNormalizer = new AivaV2TemporalNormalizer(
+                Clock.fixed(Instant.parse("2026-10-24T00:00:00Z"), ZoneOffset.UTC), ZoneId.of("Asia/Kolkata"));
+
+        var monday = octoberNormalizer.normalize("मंडे का स्लॉट बताओ", ValuePatch.unchanged(),
+                LocalDate.of(2026, 10, 25));
+
+        assertThat(monday.status()).isEqualTo(AivaV2TemporalResolution.Status.RESOLVED);
+        assertThat(monday.source()).isEqualTo(AivaV2TemporalResolution.Source.CURRENT_TURN_EXPLICIT);
+        assertThat(monday.localDate()).isEqualTo(LocalDate.of(2026, 10, 26));
+        assertThat(octoberNormalizer.normalize("ट्यूसडे", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 27));
+        assertThat(octoberNormalizer.normalize("वेडनेसडे", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 28));
+        assertThat(octoberNormalizer.normalize("थर्सडे", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 29));
+        assertThat(octoberNormalizer.normalize("फ्राइडे", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 30));
+        assertThat(octoberNormalizer.normalize("सैटरडे", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 31));
+        assertThat(octoberNormalizer.normalize("संडे", ValuePatch.unchanged(), null).localDate())
+                .isEqualTo(LocalDate.of(2026, 10, 25));
     }
 
     @Test
