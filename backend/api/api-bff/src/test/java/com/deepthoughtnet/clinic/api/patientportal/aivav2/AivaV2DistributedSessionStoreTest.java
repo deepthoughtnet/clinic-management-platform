@@ -182,6 +182,58 @@ class AivaV2DistributedSessionStoreTest {
     }
 
     @Test
+    void quickRegistrationConsentNameAndAgeSurviveRedisRoundTripWithTenantScope() {
+        try (RedisResources resources = resources()) {
+            AivaV2SessionStore instanceA = resources.store();
+            AivaV2SessionStore instanceB = resources.store();
+            String key = "VOICE|tenant-quick-registration|provider-call-quick-registration";
+            var tenant = java.util.UUID.randomUUID();
+            var state = new AivaV2Models.VoiceGuestRegistrationState(
+                    AivaV2Models.VoiceGuestRegistrationStatus.CAPABILITY_GRANTED, tenant, java.util.UUID.randomUUID(),
+                    "provider-call-quick-registration", java.util.UUID.randomUUID(), Instant.now().plusSeconds(600), true,
+                    "Asha", 42, Instant.parse("2026-10-30T02:00:00Z"));
+            var provider = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCandidate(
+                    "quick-provider", "provider-handle", "doctor-quick", "clinic-quick", tenant.toString(),
+                    "clinic", "booking-ref", "Dr. Ravi Mehta", "General Medicine", "Clinic",
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderSource.CARE_PRIVATE,
+                    new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ProviderCapabilities(
+                            true, true, false, false, false, true, false));
+            var date = java.time.LocalDate.of(2026, 11, 2);
+            var draft = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.BookingDraft(
+                    java.util.UUID.randomUUID(), state.patientId(), tenant.toString(), provider, "General Medicine",
+                    date, "EVENING", null, null, null,
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.DraftStatus.COLLECTING, 2,
+                    Instant.now().plusSeconds(600), null);
+            var availability = new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityResult(
+                    java.util.UUID.randomUUID(), draft.draftId(), draft.revision(), "criteria",
+                    provider.providerHandle(), provider.doctorId(), provider.clinicId(), date, "EVENING",
+                    "Asia/Kolkata", java.util.List.of(new com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilitySlot(
+                            "displayed-only", java.time.LocalTime.of(20, 0), java.time.LocalTime.of(20, 30), "8 PM")),
+                    null, false, Instant.now(), Instant.now().plusSeconds(300));
+            instanceA.update(key, ignored -> sessionForTenant(tenant.toString(), 1).withPatientId(state.patientId())
+                    .withBookingDraft(draft).withVoiceGuestRegistrationState(state).withActiveVoiceDoctor(provider)
+                    .withVoiceAvailabilityResult(availability)
+                    .withPresentationMode(com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.HINDI));
+
+            var restored = instanceB.find(key).orElseThrow();
+            assertThat(restored.voiceGuestRegistrationState()).isEqualTo(state);
+            assertThat(restored.patientId()).isEqualTo(state.patientId());
+            assertThat(restored.activeDraft()).isEqualTo(draft);
+            assertThat(restored.activeDraft().selectedProvider()).isEqualTo(provider);
+            assertThat(restored.activeDraft().specialtyFilter()).isEqualTo("General Medicine");
+            assertThat(restored.activeDraft().preferredDate()).isEqualTo(date);
+            assertThat(restored.activeDraft().preferredTimeWindow()).isEqualTo("EVENING");
+            assertThat(restored.activeDraft().selectedSlotReference()).isNull();
+            assertThat(restored.activeVoiceDoctor()).isEqualTo(provider);
+            assertThat(restored.latestAvailabilityResult()).isEqualTo(availability);
+            assertThat(restored.presentationMode()).isEqualTo(
+                    com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.HINDI);
+            assertThat(restored.tenantId()).isEqualTo(tenant.toString());
+            assertThat(instanceB.find("VOICE|other-tenant|provider-call-quick-registration")).isEmpty();
+        }
+    }
+
+    @Test
     void preparedGuestBookingDraftAndCanonicalSlotReferenceSurviveRedisRoundTrip() {
         try (RedisResources resources = resources()) {
             AivaV2SessionStore instanceA = resources.store();

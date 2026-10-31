@@ -80,6 +80,27 @@ public class BookingExecutionContextFactory {
                 "VOICE_GUEST_BOOKING", true);
     }
 
+    /** Call-bound quick registration creates a registered, unverified identity with new-booking scope. */
+    public BookingExecutionContext quickRegisteredVoice(AivaExecutionContext context,
+            VoiceGuestRegistrationState registration) {
+        if (context == null || registration == null || context.tenantId() == null
+                || !registration.guestBookingCapabilityGranted()
+                || registration.patientId() == null || registration.capabilityExpiresAt() == null
+                || !registration.capabilityExpiresAt().isAfter(java.time.Instant.now())
+                || !"VOICE".equalsIgnoreCase(context.channel())
+                || !java.util.Objects.equals(context.tenantId(), registration.tenantId())
+                || !java.util.Objects.equals(context.effectiveSessionBinding(), registration.providerCallId())
+                || !java.util.Objects.equals(context.interactionId(), registration.interactionId())) {
+            throw new SecurityException("Valid call-bound quick registration is required");
+        }
+        return new BookingExecutionContext(context.tenantId(), registration.patientId(),
+                BookingExecutionContext.ActorType.VOICE_REGISTERED_UNVERIFIED, null, "VOICE",
+                BookingExecutionContext.AuthenticationState.REGISTERED_UNVERIFIED,
+                "VOICE_RESTRICTED_NEW_BOOKING", context.sessionId(), context.providerCallId(),
+                registration.interactionId(), context.correlationId(), context.timezone(),
+                BookingExecutionContext.Operation.BOOK_APPOINTMENT, "VOICE_RESTRICTED_NEW_BOOKING", true);
+    }
+
     /** Restricted new-appointment actor: existing unverified patient identity, no personal-data capability. */
     public BookingExecutionContext restrictedUnverifiedVoice(AivaExecutionContext context,
             VoiceIdentityTrust trust, VoiceTransactionAuthPolicy policy, String identificationStatus) {

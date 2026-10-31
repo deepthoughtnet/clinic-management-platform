@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.when;
 
 class CommunicationTestControllerTest {
@@ -81,12 +82,14 @@ class CommunicationTestControllerTest {
         CommunicationTestDotVoiceInboundHandler handler = new CommunicationTestDotVoiceInboundHandler(inboundService, properties);
 
         handler.onStreamStart("call-a");
+        verify(inboundService, timeout(2_000)).markVoiceAnswered("call-a");
         handler.onPlaybackComplete("call-a");
+        verify(inboundService, timeout(2_000)).onInteractivePlaybackComplete("call-a");
         handler.onMedia("call-a", new byte[]{0, 0});
         handler.onMedia("call-b", new byte[]{0});
         try { Thread.sleep(250); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
 
-        verify(inboundService).processLiveUtterance(
+        verify(inboundService, timeout(2_000)).processLiveUtterance(
                 org.mockito.ArgumentMatchers.eq("call-a"),
                 org.mockito.ArgumentMatchers.argThat(wav -> wav != null
                         && wav.length == 48
@@ -113,12 +116,12 @@ class CommunicationTestControllerTest {
             handler.onStreamStop(callId, "completed");
         }
 
-        verify(inboundService, times(3)).registerInboundCall(
+        verify(inboundService, timeout(2_000).times(3)).registerInboundCall(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("did"));
-        verify(inboundService, times(3)).markInboundAnswered(org.mockito.ArgumentMatchers.anyString());
-        verify(inboundService, times(3)).startInboundGreeting(org.mockito.ArgumentMatchers.anyString());
-        verify(inboundService, times(3)).markInboundListening(org.mockito.ArgumentMatchers.anyString());
-        verify(inboundService, times(3)).onInboundStreamStopped(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("completed"));
+        verify(inboundService, timeout(2_000).times(3)).markInboundAnswered(org.mockito.ArgumentMatchers.anyString());
+        verify(inboundService, timeout(2_000).times(3)).startInboundGreeting(org.mockito.ArgumentMatchers.anyString());
+        verify(inboundService, timeout(2_000).times(3)).markInboundListening(org.mockito.ArgumentMatchers.anyString());
+        verify(inboundService, timeout(2_000).times(3)).onInboundStreamStopped(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("completed"));
     }
 
     @Test
@@ -134,7 +137,7 @@ class CommunicationTestControllerTest {
         handler.onIncomingCall("unknown-call", "caller", "+919999999999");
         handler.onStreamStart("unknown-call");
 
-        verify(inboundService).registerInboundCall("unknown-call", "caller", "+919999999999");
+        verify(inboundService, timeout(2_000)).registerInboundCall("unknown-call", "caller", "+919999999999");
         verify(inboundService, org.mockito.Mockito.never()).markInboundAnswered("unknown-call");
         verify(inboundService, org.mockito.Mockito.never()).startInboundGreeting("unknown-call");
     }
@@ -153,15 +156,17 @@ class CommunicationTestControllerTest {
 
         handler.onIncomingCall("speech-call", "caller", "did");
         handler.onStreamStart("speech-call");
+        verify(inboundService, timeout(2_000)).startInboundGreeting("speech-call");
         handler.onPlaybackComplete("speech-call");
+        verify(inboundService, timeout(2_000)).markInboundListening("speech-call");
         handler.onMedia("speech-call", mulawFrame((byte) 0x00));
         handler.onMedia("speech-call", mulawFrame((byte) 0x00));
         handler.onMedia("speech-call", mulawFrame((byte) 0xff));
 
         try { Thread.sleep(250); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
 
-        verify(inboundService).markInboundListening("speech-call");
-        verify(inboundService, times(1)).processInboundFirstUtterance(
+        verify(inboundService, timeout(2_000)).markInboundListening("speech-call");
+        verify(inboundService, timeout(2_000).times(1)).processInboundFirstUtterance(
                 org.mockito.ArgumentMatchers.eq("speech-call"),
                 org.mockito.ArgumentMatchers.argThat(wav -> wav != null && wav.length == 44 + 960
                         && wav[0] == 'R' && wav[1] == 'I' && wav[2] == 'F' && wav[3] == 'F'));
@@ -203,14 +208,16 @@ class CommunicationTestControllerTest {
 
         handler.onIncomingCall("stop-call", "caller", "did");
         handler.onStreamStart("stop-call");
+        verify(inboundService, timeout(2_000)).startInboundGreeting("stop-call");
         handler.onPlaybackComplete("stop-call");
+        verify(inboundService, timeout(2_000)).markInboundListening("stop-call");
         handler.onMedia("stop-call", mulawFrame((byte) 0x00));
         handler.onMedia("stop-call", mulawFrame((byte) 0x00));
         handler.onStreamStop("stop-call", "normal");
 
-        verify(inboundService, times(1)).processInboundFirstUtterance(
+        verify(inboundService, timeout(2_000).times(1)).processInboundFirstUtterance(
                 org.mockito.ArgumentMatchers.eq("stop-call"), org.mockito.ArgumentMatchers.any());
-        verify(inboundService).onInboundStreamStopped("stop-call", "normal");
+        verify(inboundService, timeout(2_000)).onInboundStreamStopped("stop-call", "normal");
     }
 
     private byte[] mulawFrame(byte value) {

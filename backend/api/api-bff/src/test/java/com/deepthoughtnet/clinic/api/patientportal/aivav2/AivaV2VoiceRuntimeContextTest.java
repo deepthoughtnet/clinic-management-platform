@@ -45,7 +45,7 @@ class AivaV2VoiceRuntimeContextTest {
         assertThat(result.policyDecision()).isEqualTo("DENIED");
         assertThat(result.toolExecutionStatus()).isEqualTo("BLOCKED");
         assertThat(result.runtimeDiagnostics().get("transactionAuthorization")).isNotNull();
-        assertThat(store.find("VOICE|" + tenant + "|auth-boundary-call").orElseThrow().patientId()).isNull();
+        assertThat(store.find("VOICE|" + tenant + "|auth-boundary-call").orElseThrow().patientId()).isEqualTo(patient);
         assertThat(RequestContextHolder.get()).isNull();
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         SecurityContextHolder.clearContext();

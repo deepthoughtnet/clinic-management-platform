@@ -185,11 +185,13 @@ public class VoiceReadOnlyAivaService {
                     context.tenantId(), context.clinicId(), null);
             if (guestState != null && (guestState.status() == VoiceGuestRegistrationStatus.CONSENT_REQUESTED
                     || guestState.status() == VoiceGuestRegistrationStatus.MOBILE_CONFIRMATION_REQUESTED
-                    || guestState.status() == VoiceGuestRegistrationStatus.COLLECTING_DETAILS)) {
+                    || guestState.status() == VoiceGuestRegistrationStatus.COLLECTING_DETAILS
+                    || guestState.status() == VoiceGuestRegistrationStatus.AWAITING_AGE
+                    || guestState.status() == VoiceGuestRegistrationStatus.DUPLICATE_CHECK)) {
                 return continueGuestRegistration(context, authContext, guestState, transcript);
             }
             if (guestState != null && guestState.status() == VoiceGuestRegistrationStatus.CAPABILITY_GRANTED) {
-                if (!baselinePolicy.guestBookingEnabled() || !baselinePolicy.minimalRegistrationEnabled()) {
+                if (!baselinePolicy.voiceQuickRegistrationEnabled() || !baselinePolicy.minimalRegistrationEnabled()) {
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(authContext, null);
                     return guestTurn(context, "GUEST_PREPARATION_DENIED",
                             "Voice booking preparation is not currently enabled. No appointment was created.",
@@ -202,7 +204,7 @@ public class VoiceReadOnlyAivaService {
                 }
                 if (bookingPolicy.bookingEnabled() && bookingExecutionContextFactory != null) {
                     try {
-                        BookingExecutionContext bookingContext = bookingExecutionContextFactory.guestVoice(authContext, guestState);
+                        BookingExecutionContext bookingContext = bookingExecutionContextFactory.quickRegisteredVoice(authContext, guestState);
                         return executeVoiceBookingTurn(context, authContext, transcript, bookingContext, bookingPolicy);
                     } catch (SecurityException denied) {
                         return bookingDenied(bookingPolicy, "CAPABILITY_DENIED");
@@ -287,16 +289,22 @@ public class VoiceReadOnlyAivaService {
             boolean guestConsentOffered = false;
             if (turn.mutationBlocked() && "BOOK_APPOINTMENT".equals(turn.intent())
                     && "NO_MATCH".equals(context.patientIdentificationStatus())
+                    && "GUEST_CALLER".equals(context.conversationPartyType())
                     && context.identifiedPatientId() == null && transactionPolicy != null
-                    && transactionPolicy.bookingEnabled() && transactionPolicy.guestBookingEnabled()
+                    && transactionPolicy.bookingEnabled() && transactionPolicy.voiceQuickRegistrationEnabled()
                     && transactionPolicy.minimalRegistrationEnabled()) {
+                boolean alreadyDeclined = guestState != null
+                        && guestState.status() == VoiceGuestRegistrationStatus.DECLINED;
                 String normalizedMobile = guestMobile(context.registeredMobile());
-                if (normalizedMobile != null && context.tenantId() != null
+                if (!alreadyDeclined && normalizedMobile != null && context.tenantId() != null
                     && StringUtils.hasText(context.providerCallId()) && context.interactionId() != null) {
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(authContext, new VoiceGuestRegistrationState(
                             VoiceGuestRegistrationStatus.CONSENT_REQUESTED, context.tenantId(), null,
                             context.providerCallId(), context.interactionId(), null, false));
-                    response = guestConsentPrompt(context.language());
+                    log.info("AIVA_VOICE_QUICK_REGISTRATION quickRegistrationFeatureEnabled=true "
+                            + "quickRegistrationEligible=true quickRegistrationState=CONSENT_REQUESTED "
+                            + "callerMobilePresent=true consent=false patientCreated=false");
+                    response = guestConsentPrompt(registrationLanguage(context, authContext));
                     guestConsentOffered = true;
                 }
             }
@@ -331,8 +339,24 @@ public class VoiceReadOnlyAivaService {
                         guestConsentOffered ? "GUEST_CONSENT_REQUESTED" : transactionPolicy.decision()));
             }
             if (guestConsentOffered) {
-                turnDiagnostics.put("guestRegistration", Map.of("state", "CONSENT_REQUESTED",
-                        "patientCreated", false, "authenticated", false, "capabilityGranted", false));
+                var presentationMode = v2VoiceAdapter.presentationMode(authContext);
+                turnDiagnostics.put("presentationMode", presentationMode.name());
+                turnDiagnostics.put("ttsLanguage", presentationMode
+                        == com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.ENGLISH
+                        ? "en-IN" : "hi-IN");
+                turnDiagnostics.put("ttsTextLanguageProfile", presentationMode
+                        == com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.ENGLISH
+                        ? "en-IN" : "hi-IN");
+                turnDiagnostics.put("guestRegistration", Map.ofEntries(
+                        Map.entry("state", "CONSENT_REQUESTED"),
+                        Map.entry("intent", "GUEST_REGISTRATION_CONSENT"),
+                        Map.entry("consentPending", true),
+                        Map.entry("consentDecision", "PENDING"),
+                        Map.entry("consentPersisted", false),
+                        Map.entry("namePromptIssued", false),
+                        Map.entry("bookingContextPreserved", v2VoiceAdapter.hasVoiceBookingWorkflow(authContext)),
+                        Map.entry("patientCreated", false), Map.entry("authenticated", false),
+                        Map.entry("capabilityGranted", false), Map.entry("mutationAllowed", false)));
             }
             String resultSummary = result == null ? turn.toolResultSummary() : summarizeResult(turn.tool(), result);
             log.info("AIVA_V2_VOICE_FLOW stage=VOICE_RESPONSE tenantId={} providerCallId={} conversationIdHash={} turnId={} turnNumber={} "
@@ -381,8 +405,8 @@ public class VoiceReadOnlyAivaService {
         if (bookingExecutionContextFactory == null || !policy.bookingExecutionAllowed()) return null;
         try {
             if (guestState != null && guestState.status() == VoiceGuestRegistrationStatus.CAPABILITY_GRANTED) {
-                if (!policy.guestBookingEnabled()) return null;
-                return bookingExecutionContextFactory.guestVoice(aivaContext, guestState);
+                if (!policy.voiceQuickRegistrationEnabled()) return null;
+                return bookingExecutionContextFactory.quickRegisteredVoice(aivaContext, guestState);
             }
             if (context.identityTrust() != null
                     && context.identityTrust().identityState() == VoiceIdentityTrust.IdentityState.REGISTERED_UNVERIFIED) {
@@ -503,7 +527,7 @@ public class VoiceReadOnlyAivaService {
             VoiceGuestRegistrationState state, String transcript) {
         VoiceTransactionAuthPolicy policy = transactionPolicyResolver.resolve(context.tenantId(), context.clinicId(),
                 Operation.BOOK_APPOINTMENT);
-        if (!guestStateMatches(context, state) || !policy.guestBookingEnabled()
+        if (!guestStateMatches(context, state) || !policy.voiceQuickRegistrationEnabled()
                 || !policy.minimalRegistrationEnabled()) {
             v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext, null);
             return guestTurn(context, "GUEST_REGISTRATION_FAILED",
@@ -520,21 +544,27 @@ public class VoiceReadOnlyAivaService {
             case CONSENT_REQUESTED -> {
                 if (isExplicitNo(transcript)) {
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
-                            guestState(state, VoiceGuestRegistrationStatus.FAILED, null, null, false));
+                            guestState(state, VoiceGuestRegistrationStatus.DECLINED, null, null, false));
                     return guestTurn(context, "GUEST_REGISTRATION_DECLINED",
-                            "No patient record was created.", false, false);
+                            "No patient record was created.", false, false,
+                            consentDiagnostics(context, state, VoiceGuestRegistrationStatus.DECLINED,
+                                    "DECLINED", true, false));
                 }
                 if (!isExplicitYes(transcript)) return guestTurn(context, "GUEST_REGISTRATION_CONSENT",
-                        guestConsentPrompt(context.language()), false, false);
-                VoiceGuestRegistrationStatus next = policy.guestBookingRequiresMobileConfirmation()
-                        ? VoiceGuestRegistrationStatus.MOBILE_CONFIRMATION_REQUESTED
-                        : VoiceGuestRegistrationStatus.COLLECTING_DETAILS;
+                        guestConsentClarification(registrationLanguage(context, executionContext)), false, false,
+                        consentDiagnostics(context, state, VoiceGuestRegistrationStatus.CONSENT_REQUESTED,
+                                "UNCLEAR", false, false));
+                VoiceGuestRegistrationStatus next = VoiceGuestRegistrationStatus.COLLECTING_DETAILS;
+                Instant consentTimestamp = Instant.now();
                 v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
-                        guestState(state, next, null, null, false));
+                        new VoiceGuestRegistrationState(next, state.tenantId(), null, state.providerCallId(),
+                                state.interactionId(), null, false, null, null, consentTimestamp, true, "VOICE"));
+                log.info("AIVA_VOICE_QUICK_REGISTRATION quickRegistrationConsent=true consentSource=VOICE "
+                        + "quickRegistrationState=AWAIT_QUICK_REGISTRATION_NAME patientCreated=false");
                 return guestTurn(context, "GUEST_REGISTRATION_CONSENTED",
-                        next == VoiceGuestRegistrationStatus.MOBILE_CONFIRMATION_REQUESTED
-                                ? mobileConfirmationPrompt(context.language()) : guestNamePrompt(context.language()),
-                        false, false);
+                        guestNamePrompt(registrationLanguage(context, executionContext)),
+                        false, false,
+                        consentDiagnostics(context, state, next, "ACCEPTED", true, true));
             }
             case MOBILE_CONFIRMATION_REQUESTED -> {
                 if (isExplicitNo(transcript)) {
@@ -544,17 +574,44 @@ public class VoiceReadOnlyAivaService {
                             "No patient record was created because the mobile number was not confirmed.", false, false);
                 }
                 if (!isExplicitYes(transcript)) return guestTurn(context, "GUEST_MOBILE_CONFIRMATION",
-                        mobileConfirmationPrompt(context.language()), false, false);
+                        mobileConfirmationPrompt(registrationLanguage(context, executionContext)), false, false);
                 v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
                         guestState(state, VoiceGuestRegistrationStatus.COLLECTING_DETAILS, null, null, false));
-                return guestTurn(context, "GUEST_COLLECTING_DETAILS", guestNamePrompt(context.language()), false, false);
+                return guestTurn(context, "GUEST_COLLECTING_DETAILS",
+                        guestNamePrompt(registrationLanguage(context, executionContext)), false, false);
             }
             case COLLECTING_DETAILS -> {
-                GuestName name = parseGuestName(transcript);
+                if (isExplicitNo(transcript)) {
+                    v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
+                            guestState(state, VoiceGuestRegistrationStatus.DECLINED, null, null, false));
+                    return guestTurn(context, "GUEST_REGISTRATION_DECLINED",
+                            declinedRegistrationResponse(registrationLanguage(context, executionContext)), false, false);
+                }
+                if (isExplicitYes(transcript)) return guestTurn(context, "GUEST_COLLECTING_DETAILS",
+                        guestNamePrompt(registrationLanguage(context, executionContext)), false, false,
+                        Map.of("namePromptIssued", true, "consentPending", false));
+                String name = parseGuestName(transcript);
                 if (name == null) return guestTurn(context, "GUEST_COLLECTING_DETAILS",
-                        guestNamePrompt(context.language()), false, false);
+                        guestNamePrompt(registrationLanguage(context, executionContext)), false, false);
                 v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
-                        guestState(state, VoiceGuestRegistrationStatus.DUPLICATE_CHECK, null, null, false));
+                        new VoiceGuestRegistrationState(VoiceGuestRegistrationStatus.AWAITING_AGE, state.tenantId(),
+                                null, state.providerCallId(), state.interactionId(), null, false,
+                                name, null, state.consentTimestamp()));
+                return guestTurn(context, "GUEST_AGE_REQUESTED",
+                        guestAgePrompt(registrationLanguage(context, executionContext)), false, false);
+            }
+            case AWAITING_AGE -> {
+                Integer age = parseGuestAge(transcript);
+                if (age == null) return guestTurn(context, "GUEST_AGE_CLARIFICATION",
+                        guestAgeClarification(registrationLanguage(context, executionContext)), false, false,
+                        ageDiagnostics(state, transcript, null, false, state.status()));
+                VoiceGuestRegistrationState duplicateCheck = new VoiceGuestRegistrationState(
+                        VoiceGuestRegistrationStatus.DUPLICATE_CHECK, state.tenantId(), null,
+                        state.providerCallId(), state.interactionId(), null, false,
+                        state.capturedFirstName(), age, state.consentTimestamp());
+                v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext, duplicateCheck);
+                log.info("AIVA_VOICE_QUICK_REGISTRATION ageParsed=true ageValid=true "
+                        + "quickRegistrationState=DUPLICATE_RECHECK capturedAgePresent=true");
                 if (patientService == null) {
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
                             guestState(state, VoiceGuestRegistrationStatus.FAILED, null, null, false));
@@ -570,60 +627,105 @@ public class VoiceReadOnlyAivaService {
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
                             guestState(state, VoiceGuestRegistrationStatus.FAILED, null, null, false));
                     return guestTurn(context, "GUEST_DUPLICATE_CHECK_FAILED",
-                            "I could not safely verify whether a patient record already exists. Please contact clinic reception.", false, false);
+                            "I could not safely verify whether a patient record already exists. Please contact clinic reception.", false, false,
+                            ageOutcomeDiagnostics(state, transcript, age, VoiceGuestRegistrationStatus.FAILED,
+                                    "LOOKUP_FAILED", false, false));
                 }
-                if (matches.size() == 1) return existingPatientPath(context, executionContext, state, policy);
+                if (matches.size() == 1) return existingPatientPath(context, executionContext, state, policy,
+                        matches.getFirst(), transcript, age);
                 if (matches.size() > 1) {
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
                             guestState(state, VoiceGuestRegistrationStatus.FAILED, null, null, false));
                     return guestTurn(context, "GUEST_DUPLICATE_AMBIGUOUS",
-                            "More than one patient record may match this number. Please contact clinic reception.", false, false);
+                            "More than one patient record may match this number. Please contact clinic reception.", false, false,
+                            ageOutcomeDiagnostics(state, transcript, age, VoiceGuestRegistrationStatus.FAILED,
+                                    "MULTIPLE_MATCHES_FAIL_CLOSED", false, false));
                 }
                 try {
-                    PatientUpsertCommand command = new PatientUpsertCommand(name.firstName(), name.lastName(),
-                            PatientGender.UNKNOWN, null, null, normalizedMobile, null, null, null, null, null,
+                    PatientUpsertCommand command = new PatientUpsertCommand(state.capturedFirstName(), null,
+                            PatientGender.UNKNOWN, null, age, normalizedMobile, null, null, null, null, null,
                             null, null, null, null, null, null, null, null, null, null, true);
-                    PatientRecord created = patientService.createVoiceGuest(context.tenantId(), command, context.interactionId());
+                    if (!state.consentGiven() || state.consentTimestamp() == null
+                            || !"VOICE".equals(state.consentSource())) {
+                        throw new IllegalStateException("quick registration consent is missing");
+                    }
+                    PatientRecord created = patientService.createVoiceQuickRegistration(context.tenantId(), command,
+                            context.interactionId(), java.time.OffsetDateTime.ofInstant(state.consentTimestamp(),
+                                    java.time.ZoneOffset.UTC));
                     Instant expiry = Instant.now().plusSeconds(policy.guestBookingCapabilityTtlMinutes() * 60L);
                     VoiceGuestRegistrationState granted = new VoiceGuestRegistrationState(
                             VoiceGuestRegistrationStatus.CAPABILITY_GRANTED, context.tenantId(), created.id(),
-                            context.providerCallId(), context.interactionId(), expiry, true);
+                            context.providerCallId(), context.interactionId(), expiry, true,
+                            state.capturedFirstName(), age, state.consentTimestamp(), state.consentGiven(),
+                            state.consentSource());
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext, granted);
                     log.info("VOICE_GUEST_REGISTRATION_COMPLETE callId={} tenantId={} interactionIdPresent={} capability=GUEST_BOOK_APPOINTMENT",
                             context.providerCallId(), context.tenantId(), context.interactionId() != null);
+                    Map<String, Object> diagnostics = ageDiagnostics(state, transcript, age, true,
+                            VoiceGuestRegistrationStatus.CAPABILITY_GRANTED);
+                    diagnostics.put("duplicateRecheckResult", "ZERO_MATCHES_CREATED");
+                    diagnostics.put("patientCreated", true);
                     return guestTurn(context, "GUEST_REGISTRATION_CREATED",
-                            guestCreatedResponse(context.language(), created.fullName()), true, true);
+                            guestCreatedResponse(registrationLanguage(context, executionContext)), true, true,
+                            diagnostics);
                 } catch (PatientConflictException conflict) {
                     try {
                         List<PatientRecord> existingMatches = patientService.findActiveByTenantAndMobile(
                                 context.tenantId(), normalizedMobile);
-                        if (existingMatches.size() == 1) return existingPatientPath(context, executionContext, state, policy);
+                        if (existingMatches.size() == 1) return existingPatientPath(context, executionContext, state,
+                                policy, existingMatches.getFirst(), transcript, age);
                     } catch (RuntimeException ignored) {
                         // Fail closed below; neither a duplicate nor lookup error may create another patient.
                     }
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
                             guestState(state, VoiceGuestRegistrationStatus.FAILED, null, null, false));
                     return guestTurn(context, "GUEST_DUPLICATE_CHECK_FAILED",
-                            "I could not safely verify whether a patient record already exists. Please contact clinic reception.", false, false);
+                            "I could not safely verify whether a patient record already exists. Please contact clinic reception.", false, false,
+                            ageOutcomeDiagnostics(state, transcript, age, VoiceGuestRegistrationStatus.FAILED,
+                                    "CREATE_CONFLICT_UNRESOLVED", false, false));
                 } catch (RuntimeException failure) {
                     log.warn("VOICE_GUEST_REGISTRATION_FAILED callId={} tenantId={} reason={}",
                             context.providerCallId(), context.tenantId(), failure.getClass().getSimpleName());
                     v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
                             guestState(state, VoiceGuestRegistrationStatus.FAILED, null, null, false));
                     return guestTurn(context, "GUEST_REGISTRATION_FAILED",
-                            "I cannot register the patient right now. Please contact clinic reception.", false, false);
+                            "I cannot register the patient right now. Please contact clinic reception.", false, false,
+                            ageOutcomeDiagnostics(state, transcript, age, VoiceGuestRegistrationStatus.FAILED,
+                                    "CREATE_FAILED", false, false));
                 }
+            }
+            case DECLINED -> {
+                return guestTurn(context, "GUEST_REGISTRATION_DECLINED",
+                        declinedRegistrationResponse(registrationLanguage(context, executionContext)), false, false);
             }
             default -> { return null; }
         }
     }
 
     private TurnResult existingPatientPath(Context context, AivaExecutionContext executionContext,
-            VoiceGuestRegistrationState previous, VoiceTransactionAuthPolicy policy) {
+            VoiceGuestRegistrationState previous, VoiceTransactionAuthPolicy policy, PatientRecord patient,
+            String ageTranscript, Integer age) {
+        Instant expiry = Instant.now().plusSeconds(policy.guestBookingCapabilityTtlMinutes() * 60L);
         v2VoiceAdapter.updateVoiceGuestRegistrationState(executionContext,
-                guestState(previous, VoiceGuestRegistrationStatus.FAILED, null, null, false));
-        return guestTurn(context, "EXISTING_PATIENT_FOUND",
-                existingPatientFoundResponse(context.language()), false, false);
+                guestState(previous, VoiceGuestRegistrationStatus.CAPABILITY_GRANTED, patient.id(), expiry, true));
+        return guestTurn(context, "EXISTING_PATIENT_REUSED",
+                existingPatientFoundResponse(registrationLanguage(context, executionContext)), true, true,
+                ageOutcomeDiagnostics(previous, ageTranscript, age, VoiceGuestRegistrationStatus.CAPABILITY_GRANTED,
+                        "ONE_MATCH_REUSED", false, true));
+    }
+
+    private String registrationLanguage(Context context, AivaExecutionContext executionContext) {
+        var mode = v2VoiceAdapter.presentationMode(executionContext);
+        if (mode == com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.ENGLISH) {
+            return "en";
+        }
+        if (mode == com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.HINGLISH) {
+            return "hinglish";
+        }
+        if (mode == com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.HINDI) {
+            return "hi";
+        }
+        return context.language();
     }
 
     private String existingPatientFoundResponse(String language) {
@@ -642,7 +744,8 @@ public class VoiceReadOnlyAivaService {
     private VoiceGuestRegistrationState guestState(VoiceGuestRegistrationState prior,
             VoiceGuestRegistrationStatus status, UUID patientId, Instant expiry, boolean granted) {
         return new VoiceGuestRegistrationState(status, prior.tenantId(), patientId, prior.providerCallId(),
-                prior.interactionId(), expiry, granted);
+                prior.interactionId(), expiry, granted, prior.capturedFirstName(), prior.capturedAgeYears(),
+                prior.consentTimestamp(), prior.consentGiven(), prior.consentSource());
     }
 
     private String guestMobile(String mobile) {
@@ -653,31 +756,182 @@ public class VoiceReadOnlyAivaService {
         return normalized.matches("[0-9]{10}") ? normalized : null;
     }
 
-    private GuestName parseGuestName(String transcript) {
+    private String parseGuestName(String transcript) {
         if (!StringUtils.hasText(transcript)) return null;
         String value = transcript.trim().replaceAll("(?iu)^(my name is|mera naam hai|मेरा नाम है)\\s+", "").trim();
         if (value.length() > 128 || !value.matches("[\\p{L}][\\p{L}\\p{M} .'-]*")) return null;
-        String[] parts = value.split("\\s+");
-        if (parts.length < 2) return null;
-        return new GuestName(parts[0], String.join(" ", java.util.Arrays.copyOfRange(parts, 1, parts.length)));
+        return value;
+    }
+
+    private Integer parseGuestAge(String transcript) {
+        if (!StringUtils.hasText(transcript)) return null;
+        String normalized = java.text.Normalizer.normalize(transcript, java.text.Normalizer.Form.NFKC)
+                .toLowerCase(java.util.Locale.ROOT).trim();
+        // Preserve decimal separators so a non-whole age such as 20.5 cannot
+        // become 205 when voice punctuation is normalized.
+        if (normalized.matches(".*\\d\\s*[.,]\\s*\\d.*")) return null;
+        StringBuilder ascii = new StringBuilder();
+        normalized.codePoints().forEach(cp -> {
+            int digit = Character.digit(cp, 10);
+            ascii.append(digit >= 0 ? (char) ('0' + digit) : new String(Character.toChars(cp)));
+        });
+        normalized = ascii.toString().replaceAll("[!?;,:।]+", " ").replaceAll("\\.(?!\\d)", " ")
+                .replaceAll("\\s+", " ").trim();
+        java.util.regex.Matcher number = java.util.regex.Pattern.compile("(?<![\\p{L}\\p{N}])([0-9]{1,4})(?![\\p{L}\\p{N}])")
+                .matcher(normalized);
+        Integer value = null;
+        if (number.find()) {
+            value = Integer.valueOf(number.group(1));
+            String residue = (normalized.substring(0, number.start()) + " " + normalized.substring(number.end()))
+                    .replaceAll("(?iu)(?<![\\p{L}])(i am|i'm|my age is|years old|years|year|साल|वर्ष|मेरी उम्र|उम्र|है|हूँ|हूं|old)(?![\\p{L}])", " ")
+                    .replaceAll("\\s+", " ").trim();
+            if (!residue.isEmpty()) return null;
+        } else {
+            String words = normalized.replaceAll("(?iu)(?<![\\p{L}])(years old|years|year|साल|वर्ष|मेरी उम्र|उम्र|है|हूँ|हूं|old)(?![\\p{L}])", " ")
+                    .replaceAll("\\s+", " ").trim();
+            value = ageNumberWord(words);
+        }
+        return value != null && value >= 0 && value <= 120 ? value : null;
+    }
+
+    private Integer ageNumberWord(String text) {
+        return switch (text) {
+            case "zero", "न शून्य" -> 0;
+            case "one", "एक" -> 1; case "two", "दो" -> 2; case "three", "तीन" -> 3;
+            case "four", "चार" -> 4; case "five", "पाँच", "पांच" -> 5; case "six", "छह" -> 6;
+            case "seven", "सात" -> 7; case "eight", "आठ" -> 8; case "nine", "नौ" -> 9;
+            case "ten", "दस" -> 10; case "eleven", "ग्यारह" -> 11; case "twelve", "बारह" -> 12;
+            case "thirteen", "तेरह" -> 13; case "fourteen", "चौदह" -> 14;
+            case "fifteen", "पंद्रह", "पन्द्रह" -> 15; case "sixteen", "सोलह" -> 16;
+            case "seventeen", "सत्रह" -> 17; case "eighteen", "अठारह" -> 18;
+            case "nineteen", "उन्नीस" -> 19; case "twenty", "बीस" -> 20;
+            case "twenty one", "इक्कीस" -> 21; case "twenty two", "बाईस" -> 22;
+            case "twenty three", "तेईस" -> 23; case "twenty four", "चौबीस" -> 24;
+            case "twenty five", "पच्चीस" -> 25; case "twenty six", "छब्बीस" -> 26;
+            case "twenty seven", "सत्ताईस" -> 27; case "twenty eight", "अट्ठाईस", "अट्ठाइस" -> 28;
+            case "twenty nine", "उनतीस" -> 29; case "thirty", "तीस" -> 30;
+            default -> null;
+        };
+    }
+
+    private Map<String, Object> ageDiagnostics(VoiceGuestRegistrationState before, String raw, Integer age,
+            boolean valid, VoiceGuestRegistrationStatus after) {
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("guestRegistrationStateBefore", publicRegistrationState(before));
+        diagnostics.put("ageRawRecognized", StringUtils.hasText(raw));
+        diagnostics.put("ageParsed", age == null ? "NOT_PARSED" : age);
+        diagnostics.put("ageValid", valid);
+        diagnostics.put("capturedAgePresent", valid && age != null);
+        diagnostics.put("guestRegistrationStateAfter", publicRegistrationState(after));
+        diagnostics.put("duplicateRecheckResult", valid ? "PENDING" : "NOT_RUN");
+        diagnostics.put("patientCreated", false);
+        diagnostics.put("existingPatientReused", false);
+        return diagnostics;
+    }
+
+    private Map<String, Object> ageOutcomeDiagnostics(VoiceGuestRegistrationState before, String raw, Integer age,
+            VoiceGuestRegistrationStatus after, String duplicateResult, boolean created, boolean reused) {
+        Map<String, Object> diagnostics = ageDiagnostics(before, raw, age, true, after);
+        diagnostics.put("duplicateRecheckResult", duplicateResult);
+        diagnostics.put("patientCreated", created);
+        diagnostics.put("existingPatientReused", reused);
+        return diagnostics;
     }
 
     private TurnResult guestTurn(Context context, String intent, String response,
             boolean capabilityGranted, boolean mutationBlocked) {
-        Map<String, Object> diagnostics = Map.of("guestRegistration", Map.of(
-                "state", capabilityGranted ? "CAPABILITY_GRANTED" : intent,
-                "identityState", capabilityGranted ? "GUEST_REGISTERED" : "UNIDENTIFIED",
-                "authenticated", false,
-                "capability", capabilityGranted ? "GUEST_BOOK_APPOINTMENT" : "NONE",
-                "transactionExecutionEnabled", false,
-                "patientCreated", capabilityGranted));
+        return guestTurn(context, intent, response, capabilityGranted, mutationBlocked, Map.of());
+    }
+
+    private TurnResult guestTurn(Context context, String intent, String response,
+            boolean capabilityGranted, boolean mutationBlocked, Map<String, Object> flowDiagnostics) {
+        var presentationMode = v2VoiceAdapter.presentationMode(executionContext(context));
+        String ttsLanguage = presentationMode == com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.VoicePresentationMode.ENGLISH
+                ? "en-IN" : "hi-IN";
+        VoiceGuestRegistrationState currentState = v2VoiceAdapter.voiceGuestRegistrationState(executionContext(context));
+        Map<String, Object> registration = new LinkedHashMap<>();
+        registration.put("state", publicRegistrationState(currentState));
+        registration.put("intent", intent);
+        registration.put("consentPending", currentState != null
+                && currentState.status() == VoiceGuestRegistrationStatus.CONSENT_REQUESTED);
+        registration.put("consent", currentState != null && currentState.consentGiven());
+        if (currentState != null && currentState.consentSource() != null) {
+            registration.put("consentSource", currentState.consentSource());
+        }
+        registration.put("consentTimestampPresent", currentState != null && currentState.consentTimestamp() != null);
+        registration.put("patientCreated", capabilityGranted);
+        registration.put("capability", capabilityGranted ? "BOOK_APPOINTMENT" : "NONE");
+        registration.put("capabilityGranted", capabilityGranted);
+        registration.put("namePromptIssued", "GUEST_REGISTRATION_CONSENTED".equals(intent)
+                || "GUEST_COLLECTING_DETAILS".equals(intent));
+        registration.put("mutationAllowed", false);
+        registration.put("bookingContextPreserved", v2VoiceAdapter.hasVoiceBookingWorkflow(executionContext(context)));
+        registration.put("authenticated", false);
+        registration.put("otpVerified", false);
+        registration.put("careSession", false);
+        registration.put("restrictedBookingAllowed", capabilityGranted);
+        registration.put("transactionExecutionEnabled", false);
+        registration.put("phoneBindingVerified", false);
+        registration.put("personalDataAllowed", false);
+        registration.putAll(flowDiagnostics);
+        Map<String, Object> diagnostics = Map.of(
+                "presentationMode", presentationMode.name(),
+                "ttsLanguage", ttsLanguage,
+                "ttsTextLanguageProfile", presentationMode.name(),
+                "guestRegistration", Map.copyOf(registration));
         return new TurnResult(response, intent, null, true, mutationBlocked, false,
                 null, 0, null, false, diagnostics);
     }
 
+    private Map<String, Object> consentDiagnostics(Context context, VoiceGuestRegistrationState before,
+            VoiceGuestRegistrationStatus after, String decision, boolean consentPersisted,
+            boolean namePromptIssued) {
+        boolean accepted = "ACCEPTED".equals(decision);
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("guestRegistrationStateBefore", publicRegistrationState(before));
+        diagnostics.put("guestRegistrationStateAfter", publicRegistrationState(after));
+        diagnostics.put("consentPending", after == VoiceGuestRegistrationStatus.CONSENT_REQUESTED);
+        diagnostics.put("consentDecision", decision);
+        diagnostics.put("consentPersisted", consentPersisted);
+        diagnostics.put("namePromptIssued", namePromptIssued);
+        diagnostics.put("bookingContextPreserved", v2VoiceAdapter.hasVoiceBookingWorkflow(executionContext(context)));
+        diagnostics.put("consent", accepted);
+        if (accepted) diagnostics.put("consentSource", "VOICE");
+        return diagnostics;
+    }
+
+    private String publicRegistrationState(VoiceGuestRegistrationState state) {
+        if (state == null) return "NOT_STARTED";
+        return publicRegistrationState(state.status());
+    }
+
+    private String publicRegistrationState(VoiceGuestRegistrationStatus state) {
+        if (state == null) return "NOT_STARTED";
+        return switch (state) {
+            case COLLECTING_DETAILS -> "AWAIT_QUICK_REGISTRATION_NAME";
+            case AWAITING_AGE -> "AWAIT_QUICK_REGISTRATION_AGE";
+            case DUPLICATE_CHECK -> "DUPLICATE_RECHECK";
+            case CAPABILITY_GRANTED, CREATED -> "REGISTERED_UNVERIFIED";
+            default -> state.name();
+        };
+    }
+
+    private String guestConsentClarification(String language) {
+        if (english(language)) return "I’m not sure. Would you like me to create the basic registration so we can continue?";
+        if (hinglish(language)) return "Mujhe clear nahi hua. Kya main appointment continue karne ke liye basic registration bana doon?";
+        return "मुझे स्पष्ट नहीं हुआ। क्या मैं appointment जारी रखने के लिए basic registration बना दूँ?";
+    }
+
+    private String declinedRegistrationResponse(String language) {
+        if (english(language)) return "Okay. I will not create a patient record. You can continue with general questions, but I cannot book this appointment through Voice without registration.";
+        if (hinglish(language)) return "Theek hai, main patient record nahi banaunga. General questions pooch sakte hain, lekin registration ke bina Voice se appointment book nahi kar paunga.";
+        return "ठीक है, मैं patient record नहीं बनाऊँगा। आप सामान्य जानकारी पूछ सकते हैं, लेकिन registration के बिना Voice से appointment book नहीं कर पाऊँगा।";
+    }
+
     private String guestConsentPrompt(String language) {
-        if (english(language)) return "I could not find an existing patient record for this number. I can create a basic patient record for appointment assistance. Would you like me to proceed?";
-        return "इस नंबर से कोई मौजूदा patient record नहीं मिला। मैं appointment सहायता के लिए एक basic patient record बना सकती हूँ। क्या मैं आगे बढ़ूँ?";
+        if (english(language)) return "I couldn't find a patient record for this number. May I create a basic registration so I can continue your appointment booking?";
+        if (hinglish(language)) return "Is number se koi patient record nahi mila. Appointment book karne ke liye kya main aapka basic registration bana doon?";
+        return "इस नंबर से कोई patient record नहीं मिला। Appointment book करने के लिए क्या मैं आपका basic registration बना दूँ?";
     }
 
     private String mobileConfirmationPrompt(String language) {
@@ -686,20 +940,37 @@ public class VoiceReadOnlyAivaService {
     }
 
     private String guestNamePrompt(String language) {
-        if (english(language)) return "Please tell me the patient's full name.";
-        return "कृपया patient का पूरा नाम बताइए।";
+        if (english(language)) return "Please tell me your first name.";
+        if (hinglish(language)) return "Please apna first name batayein.";
+        return "कृपया अपना पहला नाम बताइए।";
     }
 
-    private String guestCreatedResponse(String language, String name) {
-        if (english(language)) return "A basic patient record has been created for " + name + ". No appointment has been booked; I can help check doctors and available times.";
-        return "" + name + " के लिए basic patient record बन गया है। अभी appointment book नहीं हुई है; मैं doctor और available समय देख सकती हूँ।";
+    private String guestAgePrompt(String language) {
+        if (english(language)) return "About how old are you in years?";
+        if (hinglish(language)) return "Aapki age lagbhag kitni hai?";
+        return "आपकी उम्र लगभग कितनी है?";
+    }
+
+    private String guestAgeClarification(String language) {
+        if (english(language)) return "Please tell me your approximate age as a whole number, from 0 to 120.";
+        if (hinglish(language)) return "Please apni lagbhag age poore saal mein batayein.";
+        return "कृपया अपनी लगभग उम्र पूरे सालों में बताइए।";
+    }
+
+    private String guestCreatedResponse(String language) {
+        if (english(language)) return "Your name has been recorded. Please check it once at reception on your first clinic visit. I can continue with your appointment booking.";
+        if (hinglish(language)) return "Aapka naam record ho gaya hai. Clinic pehli baar aane par reception par ek baar check kar lijiye. Ab appointment booking aage badhate hain.";
+        return "आपका नाम रिकॉर्ड हो गया है। पहली बार क्लिनिक आने पर कृपया रिसेप्शन पर एक बार अपना नाम चेक कर लें। अब appointment booking आगे बढ़ाते हैं।";
     }
 
     private boolean english(String language) {
         return language != null && language.toLowerCase(java.util.Locale.ROOT).startsWith("en");
     }
 
-    private record GuestName(String firstName, String lastName) { }
+    private boolean hinglish(String language) {
+        return language != null && language.toUpperCase(java.util.Locale.ROOT).contains("HINGLISH");
+    }
+
 
     private java.util.List<AivaV2VoiceToolExecutor.ProviderOption> providerOptions(
             HealthcareAiReadOnlyToolGateway.ToolResult result) {
@@ -1333,13 +1604,35 @@ public class VoiceReadOnlyAivaService {
     }
 
     private boolean isExplicitYes(String input) {
-        return input != null && input.trim().toLowerCase(java.util.Locale.ROOT)
-                .matches("(हाँ|हां|जी हाँ|जी हां|haan|han|ji haan|yes|yeah|yep|send it)[.!? ]*");
+        String text = normalizeConsentText(input);
+        if (text.isEmpty()) return false;
+        if (isExplicitNo(input)) return false;
+        return java.util.Set.of("yes", "yes please", "yeah", "yeah please", "yep", "yep please", "sure",
+                "okay", "ok", "go ahead", "please do", "create it", "हाँ", "हां", "जी हाँ", "जी हां",
+                "हाँ जी", "हां जी", "कर दीजिए", "कर दीजिये", "रजिस्ट्रेशन कर दीजिए",
+                "रजिस्ट्रेशन कर दीजिये", "registration कर दीजिए", "registration कर दीजिये",
+                "हाँ रजिस्ट्रेशन कर दीजिए", "हां रजिस्ट्रेशन कर दीजिए",
+                "हाँ registration कर दीजिए", "हां registration कर दीजिए", "बना दीजिए", "बना दीजिये",
+                "yes कर दीजिए", "yes कर दीजिये", "haan", "haan please", "ji haan",
+                "kar dijiye", "registration kar dijiye", "haan registration kar dijiye",
+                "bana dijiye", "create it please", "yes please create", "yes create it", "yes please do",
+                "go ahead and create it", "please create the registration", "please create registration")
+                .contains(text);
     }
 
     private boolean isExplicitNo(String input) {
-        return input != null && input.trim().toLowerCase(java.util.Locale.ROOT)
-                .matches("(नहीं|नही|मत भेजिए|nahi|no|no thanks|nah)[.!? ]*");
+        String text = normalizeConsentText(input);
+        return java.util.Set.of("no", "no thanks", "no thank you", "nah", "don't create", "do not create",
+                "no please don't", "no please do not", "no don't create", "नहीं", "नही", "नहीं चाहिए",
+                "नही चाहिए", "मत बनाइए", "मत बनाईए", "nahi", "nahi chahiye", "mat banaiye",
+                "mat banayiye").contains(text);
+    }
+
+    private String normalizeConsentText(String input) {
+        if (input == null) return "";
+        return java.text.Normalizer.normalize(input, java.text.Normalizer.Form.NFKC)
+                .toLowerCase(java.util.Locale.ROOT).replace('’', '\'')
+                .replaceAll("[,;.!?।]+", " ").replaceAll("\\s+", " ").trim();
     }
 
     private Map<String, Object> policyDiagnostics(VoiceTransactionAuthPolicy policy, String decision) {
@@ -1363,6 +1656,7 @@ public class VoiceReadOnlyAivaService {
         details.put("effectiveOtpChallengeRequired", false);
         details.put("bookingExecutionAllowed", policy.bookingExecutionAllowed());
         details.put("guestBookingEnabled", policy.guestBookingEnabled());
+        details.put("voiceQuickRegistrationEnabled", policy.voiceQuickRegistrationEnabled());
         details.put("minimalRegistrationEnabled", policy.minimalRegistrationEnabled());
         details.put("guestBookingRequiresMobileConfirmation", policy.guestBookingRequiresMobileConfirmation());
         details.put("guestBookingCapabilityTtlMinutes", policy.guestBookingCapabilityTtlMinutes());

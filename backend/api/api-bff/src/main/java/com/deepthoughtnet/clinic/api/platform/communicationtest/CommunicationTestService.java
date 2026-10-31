@@ -475,8 +475,12 @@ public class CommunicationTestService {
         }
         try {
             if (!G711MuLawAudioConverter.isPcm16Mono8kWav(wavAudio)) throw new IllegalArgumentException("Invalid inbound WAV payload.");
+            long sttStarted = System.nanoTime();
+            log.info("VOICE_STAGE_START stage=STT providerCallId={} threadName={}", callId, Thread.currentThread().getName());
             VoiceTranscriptionResult transcription = voiceOrchestratorService.transcribeBufferedAudio(
                     null, wavAudio, "audio/wav", "dotvoice-inbound.wav", current.language());
+            log.info("VOICE_STAGE_END stage=STT providerCallId={} elapsedMs={} threadName={}", callId,
+                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sttStarted), Thread.currentThread().getName());
             String transcript = transcription == null || transcription.transcript() == null ? "" : transcription.transcript().trim();
             if (!StringUtils.hasText(transcript)) {
                 captureStarted.set(false);
@@ -516,7 +520,11 @@ public class CommunicationTestService {
                 log.warn("DOTVOICE_INBOUND_AIVA_CONTINUATION_DISABLED callId={} reason=AIVA_SERVICE_NOT_WIRED", callId);
                 playInboundAudio(callId, "धन्यवाद। आपका संदेश प्राप्त हो गया है।", true);
             } else {
+                long aivaStarted = System.nanoTime();
+                log.info("VOICE_STAGE_START stage=AIVA providerCallId={} turnId={} threadName={}", callId, turnId, Thread.currentThread().getName());
                 VoiceReadOnlyAivaService.TurnResult turn = voiceReadOnlyAivaService.continueTurn(context, transcript);
+                log.info("VOICE_STAGE_END stage=AIVA providerCallId={} turnId={} elapsedMs={} threadName={}", callId, turnId,
+                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - aivaStarted), Thread.currentThread().getName());
                 Map<String, Object> responseDiagnostics = new java.util.LinkedHashMap<>(turn.runtimeDiagnostics());
                 responseDiagnostics.putIfAbsent("presentationMode", voiceReadOnlyAivaService.presentationModeName(context));
                 responseDiagnostics.putIfAbsent("ttsLanguage", voiceReadOnlyAivaService.presentationLanguage(context));
@@ -640,9 +648,13 @@ public class CommunicationTestService {
                     current.receivedAt(), current.answeredAt(), current.capturedAt(), current.endedAt(), current.hangupCause()));
         }
         boolean hasPersistedMode = java.util.Set.of("ENGLISH", "HINDI", "HINGLISH").contains(presentationMode);
+        long ttsStarted = System.nanoTime();
+        log.info("VOICE_STAGE_START stage=TTS providerCallId={} threadName={}", callId, Thread.currentThread().getName());
         ReminderVoiceRenderer.RenderedReminder rendered = hasPersistedMode
                 ? reminderVoiceRenderer.render(text, presentationMode, ttsLanguage)
                 : reminderVoiceRenderer.render(text, ttsLanguage);
+        log.info("VOICE_STAGE_END stage=TTS providerCallId={} elapsedMs={} threadName={}", callId,
+                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - ttsStarted), Thread.currentThread().getName());
         log.info("VOICE_TTS_RESULT conversationIdHash={} turnId={} responseIntent={} presentationMode={} "
                         + "ttsLanguage={} ttsTextLanguageProfile={} provider={} success={}",
                 AivaV2VoiceFlowTrace.conversationHash(callId), MDC.get(AivaV2VoiceFlowTrace.TURN_ID),
@@ -660,15 +672,23 @@ public class CommunicationTestService {
             return;
         }
         try {
+            long conversionStarted = System.nanoTime();
+            log.info("VOICE_STAGE_START stage=AUDIO_CONVERSION providerCallId={} threadName={}", callId, Thread.currentThread().getName());
             var pcm = ReminderAudioNormalizer.normalize(rendered.audio().audioBytes(), rendered.audio().contentType(), rendered.sourceSampleRate());
             log.info("VOICE_TTS_AUDIO_NORMALIZED provider={} encoding=PCM16 sampleRate={} channels={}",
                     rendered.provider(), pcm.sampleRate(), pcm.channels());
             log.info("VOICE_PLAYBACK_FORMAT provider={} sourceSampleRate={} playbackSampleRate=8000 resampled={} encoding=G711_MULAW channels=1",
                     rendered.provider(), pcm.sampleRate(), pcm.sampleRate() != 8_000 || pcm.channels() != 1);
             List<byte[]> frames = G711MuLawAudioConverter.toFramesPcm(pcm.bytes(), pcm.sampleRate(), pcm.channels());
+            log.info("VOICE_STAGE_END stage=AUDIO_CONVERSION providerCallId={} elapsedMs={} threadName={}", callId,
+                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - conversionStarted), Thread.currentThread().getName());
             log.info("DOTVOICE_PLAYBACK_START providerCallId={} provider={} purpose={} frameCount={} audioBytes={}",
                     callId, rendered.provider(), closing ? "CLOSING" : "INBOUND_RESPONSE", frames.size(), frames.size() * 160);
+            long enqueueStarted = System.nanoTime();
             boolean playbackStarted = dotVoiceMediaStreamClient.startPlayback(callId, frames);
+            log.info("VOICE_STAGE_END stage=PLAYBACK_ENQUEUE providerCallId={} elapsedMs={} accepted={} threadName={}", callId,
+                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - enqueueStarted), playbackStarted,
+                    Thread.currentThread().getName());
             if (!playbackStarted) {
                 dotVoiceMediaStreamClient.onPlaybackPreparationFailed(callId);
                 if (closing) onInboundClosingPlaybackComplete(callId);

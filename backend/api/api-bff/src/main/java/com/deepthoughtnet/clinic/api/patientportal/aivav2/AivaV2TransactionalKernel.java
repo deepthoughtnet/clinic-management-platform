@@ -108,6 +108,11 @@ class AivaV2TransactionalKernel {
         return tenantId == null ? null : tools.resolveBookingProviderForTenant(evidence, null, null, tenantId);
     }
 
+    ProviderSearchResult resolveVoiceProviderSpecialty(UUID tenantId, String specialty) {
+        return tenantId == null || !org.springframework.util.StringUtils.hasText(specialty) ? null
+                : tools.resolveBookingProviderForTenant(null, specialty, null, tenantId);
+    }
+
     private ProviderCandidate adoptCanonicalBookingProvider(UUID tenantId, ProviderCandidate evidence,
                                                               String adoptionSource, BookingDraft draft) {
         if (tenantId == null || evidence == null) return null;

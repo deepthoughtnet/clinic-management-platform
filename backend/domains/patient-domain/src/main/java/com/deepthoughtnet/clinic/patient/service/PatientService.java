@@ -25,6 +25,11 @@ import java.util.Optional;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.Locale;
+import java.sql.PreparedStatement;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementCreator;
+import org.springframework.jdbc.core.PreparedStatementCallback;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
@@ -40,6 +45,8 @@ public class PatientService {
     private final PatientRepository repository;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
+    @Autowired(required = false)
+    private JdbcTemplate jdbcTemplate;
 
     public PatientService(PatientRepository repository, AuditEventPublisher auditEventPublisher, ObjectMapper objectMapper) {
         this.repository = repository;
@@ -114,17 +121,41 @@ public class PatientService {
 
     @Transactional
     public PatientRecord create(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId) {
-        return createInternal(tenantId, command, actorAppUserId, null, null, null);
+        return createInternal(tenantId, command, actorAppUserId, null, null, null, null);
     }
 
     /** Creates a minimal guest record through the patient aggregate and records truthful Voice provenance. */
     @Transactional
     public PatientRecord createVoiceGuest(UUID tenantId, PatientUpsertCommand command, UUID interactionId) {
-        return createInternal(tenantId, command, null, "VOICE_GUEST_BOOKING", "VOICE", interactionId);
+        return createInternal(tenantId, command, null, "VOICE_GUEST_BOOKING", "VOICE", interactionId, null);
+    }
+
+    /** Creates the minimum patient record after explicit Voice quick-registration consent. */
+    @Transactional
+    public PatientRecord createVoiceQuickRegistration(UUID tenantId, PatientUpsertCommand command,
+            UUID interactionId, OffsetDateTime consentTimestamp) {
+        requireTenant(tenantId);
+        if (command == null || !StringUtils.hasText(command.mobile())) {
+            throw new IllegalArgumentException("mobile is required");
+        }
+        // Serialize quick-registration creates for the same tenant/contact across app instances.
+        // The lock is transaction scoped and does not establish a one-person-per-phone invariant.
+        if (jdbcTemplate == null) throw new IllegalStateException("Patient transaction lock is unavailable");
+        jdbcTemplate.execute((PreparedStatementCreator) connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "select pg_advisory_xact_lock(hashtextextended(?, 0))");
+            statement.setString(1, tenantId + ":" + command.mobile().trim());
+            return statement;
+        }, (PreparedStatementCallback<Void>) statement -> {
+            statement.execute();
+            return null;
+        });
+        return createInternal(tenantId, command, null, "AIVA_VOICE_QUICK_REGISTRATION", "VOICE",
+                interactionId, consentTimestamp);
     }
 
     private PatientRecord createInternal(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId,
-            String registrationSource, String channel, UUID interactionId) {
+            String registrationSource, String channel, UUID interactionId, OffsetDateTime consentTimestamp) {
         requireTenant(tenantId);
         validate(command);
         ensureMobileIsAvailable(tenantId, null, command.mobile());
@@ -142,7 +173,7 @@ public class PatientService {
                     actorAppUserId,
                     OffsetDateTime.now(),
                     "Created patient " + saved.getPatientNumber(),
-                    detailsJson(saved, registrationSource, channel, interactionId)
+                    detailsJson(saved, registrationSource, channel, interactionId, consentTimestamp)
             ));
 
             return toRecord(saved);
@@ -391,6 +422,11 @@ public class PatientService {
     }
 
     private String detailsJson(PatientEntity entity, String registrationSource, String channel, UUID interactionId) {
+        return detailsJson(entity, registrationSource, channel, interactionId, null);
+    }
+
+    private String detailsJson(PatientEntity entity, String registrationSource, String channel, UUID interactionId,
+            OffsetDateTime consentTimestamp) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", entity.getId());
         details.put("tenantId", entity.getTenantId());
@@ -403,6 +439,12 @@ public class PatientService {
         if (registrationSource != null) details.put("registrationSource", registrationSource);
         if (channel != null) details.put("channel", channel);
         if (interactionId != null) details.put("interactionId", interactionId);
+        if (consentTimestamp != null) {
+            details.put("quickRegistrationConsent", true);
+            details.put("consentSource", "VOICE");
+            details.put("consentTimestamp", consentTimestamp);
+            details.put("nameVerificationStatus", "UNVERIFIED_VOICE_CAPTURE");
+        }
         try {
             return objectMapper.writeValueAsString(details);
         } catch (JsonProcessingException ex) {

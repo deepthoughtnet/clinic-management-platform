@@ -21,6 +21,8 @@ import com.deepthoughtnet.clinic.api.patientportal.PatientPortalService;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.BookingPatch;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityResult;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilitySlot;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityTimeConstraint;
+import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.AvailabilityTimeConstraintMode;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ConfirmationPolarity;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.ConversationDecision;
 import com.deepthoughtnet.clinic.api.patientportal.aivav2.AivaV2Models.DialogAct;
@@ -1299,6 +1301,194 @@ class AivaV2VoiceDotVoiceInboundPathTest {
     }
 
     @Test
+    void repeatedSlotPageIsStableAndDistinctFromShowMore() {
+        List<LocalTime> offered = List.of(LocalTime.of(17, 0), LocalTime.of(17, 30), LocalTime.of(18, 0),
+                LocalTime.of(18, 30), LocalTime.of(19, 0), LocalTime.of(19, 30),
+                LocalTime.of(20, 0), LocalTime.of(20, 30), LocalTime.of(21, 0));
+        InboundHarness harness = runInboundSequence(List.of(
+                "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "शाम", "repeat the slots",
+                "स्लॉट दोबारा बताइए", "और समय बताइए", "say those times again"),
+                true, true, offered);
+        List<SessionProjection> states = harness.sessionSnapshots();
+        assertThat(states.get(3).latestAvailabilityResult().displayOffset()).isZero();
+        assertThat(states.get(4).latestAvailabilityResult().displayOffset()).isZero();
+        assertThat(states.get(5).latestAvailabilityResult().displayOffset()).isEqualTo(3);
+        assertThat(states.get(6).latestAvailabilityResult().displayOffset()).isEqualTo(3);
+        assertThat(harness.result().conversationTurns().get(3).toolResultSummary()).isEqualTo("REPEAT_SLOT_PAGE");
+        assertThat(harness.result().conversationTurns().get(4).toolResultSummary()).isEqualTo("REPEAT_SLOT_PAGE");
+        assertThat(harness.result().conversationTurns().get(6).toolResultSummary()).isEqualTo("REPEAT_SLOT_PAGE");
+        assertThat(harness.availabilityCallTranscripts()).containsExactly("कल", "शाम");
+        verify(harness.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void currentBookingCanBeCancelledAndInspectionDoesNotMutateContext() {
+        InboundHarness cancelled = runInboundSequence(List.of(
+                "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "appointment नहीं चाहिए"));
+        assertThat(cancelled.sessionSnapshots().getLast().activeDraft()).isNull();
+        assertThat(cancelled.result().conversationTurns().getLast().toolResultSummary())
+                .isEqualTo("CURRENT_BOOKING_CANCELLED");
+        verify(cancelled.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+
+        InboundHarness close = runInboundSequence(List.of(
+                "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "appointment नहीं चाहिए, thank you"));
+        assertThat(close.sessionSnapshots().getLast().closed()).isTrue();
+        assertThat(close.sessionSnapshots().getLast().activeDraft()).isNull();
+        assertThat(close.result().conversationTurns().getLast().detectedIntent()).isEqualTo("END_CONVERSATION");
+
+        InboundHarness inspected = runInboundSequence(List.of(
+                "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "और समय बताइए",
+                "ये किस डॉक्टर का appointment है?", "कौन सी तारीख?"), true, true,
+                List.of(LocalTime.of(9, 0), LocalTime.of(9, 30), LocalTime.of(10, 0),
+                        LocalTime.of(10, 30), LocalTime.of(11, 0), LocalTime.of(11, 30)));
+        assertThat(inspected.sessionSnapshots().get(3).activeDraft())
+                .isEqualTo(inspected.sessionSnapshots().get(2).activeDraft());
+        assertThat(inspected.sessionSnapshots().get(4).activeDraft())
+                .isEqualTo(inspected.sessionSnapshots().get(2).activeDraft());
+        assertThat(inspected.sessionSnapshots().get(4).latestAvailabilityResult().displayOffset()).isEqualTo(3);
+    }
+
+    @Test
+    void hindiProviderChangeControlPrecedesProviderExtractionAndSlotInspectionUsesPageContext() {
+        InboundHarness change = runInboundSequence(List.of(
+                "I want to book an appointment with Dr Amit Verma", "tomorrow", "10 AM", "मुझे डॉक्टर बदलना है"));
+        assertThat(change.result().conversationTurns().getLast().toolResultSummary())
+                .isEqualTo("CONTEXT_CHANGE_CLARIFICATION");
+        assertThat(change.result().conversationTurns().getLast().aivaResponseText())
+                .doesNotContain("Badalana");
+        assertThat(change.sessionSnapshots().getLast().voiceClarificationState().pendingAction())
+                .isEqualTo("CHANGE_PROVIDER");
+        verify(change.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+
+        AivaV2SessionStore sessions = new AivaV2SessionStore(Clock.systemUTC());
+        String callId = "slot-page-context-inspection";
+        LocalDate pageDate = LocalDate.of(2026, 10, 31);
+        ProviderCandidate doctor = new ProviderCandidate("amit", "amit", DOCTOR.toString(), CLINIC.toString(),
+                TENANT.toString(), null, null, "Amit Verma", "General Medicine", "Clinic", ProviderSource.CARE_PRIVATE,
+                new ProviderCapabilities(true, true, false, false, false, true, false));
+        Instant now = Instant.now();
+        AvailabilityResult page = new AvailabilityResult(UUID.randomUUID(), null, 0, "inspection-page",
+                doctor.providerHandle(), doctor.doctorId(), doctor.clinicId(), pageDate, "EVENING", null,
+                "Asia/Kolkata", List.of(new AvailabilitySlot("slot-1", LocalTime.of(19, 0),
+                LocalTime.of(19, 30), "7 PM")), "VOICE_DAYPART:EVENING", false,
+                now, now.plusSeconds(600), 0, 3);
+        sessions.update("VOICE|" + TENANT + "|" + callId, ignored -> new SessionProjection(callId, PATIENT,
+                TENANT.toString(), null, null, null, page, null, now.plusSeconds(1800)).withActiveVoiceDoctor(doctor));
+        InboundHarness inspected = runInboundSequence(List.of("ये किस डॉक्टर के slots हैं?", "ये किस डॉक्टर के स्लाइस है?",
+                "कौन सी तारीख?"), false, true, null, List.of(), false, null, false,
+                TENANT, PATIENT, CLINIC, DOCTOR, callId, sessions);
+        assertThat(inspected.result().conversationTurns()).allSatisfy(turn ->
+                assertThat(turn.toolResultSummary()).isEqualTo("READ_ONLY_CONTEXT_INSPECTION"));
+        assertThat(inspected.result().conversationTurns().get(0).aivaResponseText()).contains("Amit Verma");
+        assertThat(inspected.result().conversationTurns().get(1).aivaResponseText()).contains("Amit Verma");
+        assertThat(inspected.result().conversationTurns().get(2).aivaResponseText()).contains("31", "2026");
+        assertThat(inspected.sessionSnapshots()).allSatisfy(state -> {
+            assertThat(state.activeDraft()).isNull();
+            assertThat(state.latestAvailabilityResult().displayOffset()).isZero();
+        });
+    }
+
+    @Test
+    void slotDeclineRepeatAndCombinedCloseRemainReadOnlyAndLocalized() {
+        List<LocalTime> offered = List.of(LocalTime.of(17, 0), LocalTime.of(17, 30), LocalTime.of(18, 0),
+                LocalTime.of(18, 30), LocalTime.of(19, 0), LocalTime.of(19, 30));
+        for (String phrase : List.of("इनमें से कोई नहीं", "इनमें से नहीं", "नहीं चुनना")) {
+            InboundHarness declined = runInboundSequence(List.of(
+                    "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "शाम", phrase), true, true, offered);
+            assertThat(declined.result().conversationTurns().getLast().toolResultSummary()).as(phrase)
+                    .isEqualTo("DECLINE_CURRENT_SLOT_OPTIONS");
+            assertThat(declined.sessionSnapshots().getLast().latestAvailabilityResult().displayOffset()).isZero();
+            verify(declined.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+        }
+        InboundHarness repeat = runInboundSequence(List.of(
+                "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "शाम", "फिर से स्लॉट बताइए", "फिर से स्लॉट बताइए"),
+                true, true, offered);
+        assertThat(repeat.result().conversationTurns().get(3).toolResultSummary()).isEqualTo("REPEAT_SLOT_PAGE");
+        assertThat(repeat.result().conversationTurns().get(4).toolResultSummary()).isEqualTo("REPEAT_SLOT_PAGE");
+        assertThat(repeat.sessionSnapshots().get(3).latestAvailabilityResult().displayOffset()).isZero();
+        assertThat(repeat.sessionSnapshots().get(4).latestAvailabilityResult().displayOffset()).isZero();
+        assertThat(repeat.availabilityCallTranscripts()).containsExactly("कल", "शाम");
+
+        InboundHarness close = runInboundSequence(List.of("मुझे डॉक्टर अमित वर्मा का अपॉइंटमेंट चाहिए", "कल",
+                "ओके booking नहीं करनी, thank you"));
+        assertThat(close.result().conversationTurns().getLast().detectedIntent()).isEqualTo("END_CONVERSATION");
+        assertThat(close.result().conversationTurns().getLast().aivaResponseText()).contains("धन्यवाद");
+        assertThat(close.sessionSnapshots().getLast().closed()).isTrue();
+        assertThat(close.sessionSnapshots().getLast().activeDraft()).isNull();
+        verify(close.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void relativeNextDayChainsFromRetainedDisplayedDateAndHindiNightRangeIsParsed() {
+        LocalDate tomorrow = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1);
+        for (String nextDay : List.of("उसके अगले दिन", "एक दिन बाद", "next day")) {
+            InboundHarness chained = runInboundSequence(List.of("मुझे डॉक्टर अमित वर्मा का appointment चाहिए",
+                    "कल", nextDay), false, true, List.of(LocalTime.of(18, 0), LocalTime.of(19, 0)));
+            assertThat(chained.sessionSnapshots().get(1).activeDraft().preferredDate()).as(nextDay).isEqualTo(tomorrow);
+            assertThat(chained.sessionSnapshots().getLast().activeDraft().preferredDate()).as(nextDay)
+                    .isEqualTo(tomorrow.plusDays(1));
+        }
+
+        InboundHarness range = runInboundSequence(List.of("मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल",
+                "रात में 6 से 9"), false, true,
+                List.of(LocalTime.of(17, 0), LocalTime.of(18, 0), LocalTime.of(20, 0), LocalTime.of(21, 0)));
+        assertThat(range.result().conversationTurns().getLast().toolResultSummary())
+                .isEqualTo("SLOT_CHOICES");
+        assertThat(range.sessionSnapshots().getLast().activeDraft().availabilityTimeConstraint())
+                .isEqualTo(new AvailabilityTimeConstraint(AvailabilityTimeConstraintMode.BETWEEN,
+                        LocalTime.of(18, 0), LocalTime.of(21, 0)));
+        assertThat(range.result().conversationTurns().getLast().aivaResponseText())
+                .doesNotContain("Select one of the current slots.");
+    }
+
+
+    @Test
+    void explicitProviderChangeEscapesSlotCollectionWithoutMutation() {
+        PatientPortalCareAiDoctorOption pediatrician = additionalDoctor("Dr Ravi Mehta");
+        InboundHarness harness = runInboundSequence(List.of(
+                "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "doctor बदलना है",
+                "Ravi Mehta"), false, true, null, List.of(pediatrician));
+        assertThat(harness.result().conversationTurns().get(2).toolResultSummary())
+                .isEqualTo("CONTEXT_CHANGE_CLARIFICATION");
+        assertThat(harness.sessionSnapshots().get(2).activeDraft().selectedSlotReference()).isNull();
+        verify(harness.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void specialtyRequestWhileSlotsAreDisplayedStartsCanonicalProviderSwitch() {
+        PatientPortalCareAiDoctorOption pediatrician = new PatientPortalCareAiDoctorOption(
+                UUID.randomUUID().toString(), "Dr Pooja Rao", "Pediatrics", UUID.randomUUID(), CLINIC,
+                TENANT, "clinic", "Clinic");
+        InboundHarness harness = runInboundSequence(List.of(
+                "मुझे डॉक्टर अमित वर्मा का appointment चाहिए", "कल", "और समय बताइए",
+                "मुझे बच्चे के डॉक्टर का appointment चाहिए"), true, true,
+                List.of(LocalTime.of(9, 0), LocalTime.of(9, 30), LocalTime.of(10, 0)), List.of(pediatrician));
+
+        var switchTurn = harness.result().conversationTurns().getLast();
+        assertThat(switchTurn.toolResultSummary()).isEqualTo("PROVIDER_SWITCH_CONFIRMATION_REQUIRED");
+        assertThat(harness.sessionSnapshots().getLast().voiceClarificationState().pendingProviderSwitch()
+                .targetProviderId()).isEqualTo(pediatrician.publicDoctorId());
+        assertThat(harness.sessionSnapshots().getLast().activeDraft().preferredDate())
+                .isEqualTo(LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1));
+        verify(harness.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void explicitDiscoveryDateAndDaypartSeedBookingDraftWithoutUsingSystemDefault() {
+        InboundHarness harness = runInboundSequence(List.of(
+                "Which doctors are available tomorrow evening?", "I want an appointment with Dr Amit Verma"));
+        SessionProjection booking = harness.sessions().find("VOICE|" + TENANT + "|"
+                + harness.result().callId()).orElseThrow();
+        assertThat(booking.activeDraft()).isNotNull();
+        assertThat(booking.activeDraft().preferredDate())
+                .isEqualTo(LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1));
+        assertThat(booking.activeDraft().preferredTimeWindow()).isEqualTo("evening");
+        assertThat(booking.activeDraft().selectedProvider()).isNotNull();
+        assertThat(booking.activeDraft().selectedProvider().doctorId()).isEqualTo(DOCTOR.toString());
+        verify(harness.appointments(), never()).createScheduled(any(), any(), isNull(), anyBoolean(), any(), any());
+    }
+
+    @Test
     void hindiSpokenEveningTimeSelectsOnlyTheSecondDisplayedPage() {
         List<LocalTime> offered = List.of(LocalTime.of(16, 30), LocalTime.of(17, 0), LocalTime.of(17, 30),
                 LocalTime.of(18, 30), LocalTime.of(19, 0), LocalTime.of(19, 30));
@@ -2080,7 +2270,7 @@ class AivaV2VoiceDotVoiceInboundPathTest {
         PublicCatalogFacade publicCatalog = mock(PublicCatalogFacade.class);
         AivaV2BookingTools bookingTools = new AivaV2BookingTools(portal, publicCatalog,
                 Clock.systemUTC());
-        when(portal.doctorSlotsForTenant(eq(tenantId), anyString(), isNull(), any(LocalDate.class)))
+        when(portal.doctorSlotsForTenant(eq(tenantId), anyString(), nullable(String.class), any(LocalDate.class)))
                 .thenAnswer(invocation -> {
                     availabilityCallTranscripts.add(currentTranscript.get());
                     LocalDate requestedDate = invocation.getArgument(3);

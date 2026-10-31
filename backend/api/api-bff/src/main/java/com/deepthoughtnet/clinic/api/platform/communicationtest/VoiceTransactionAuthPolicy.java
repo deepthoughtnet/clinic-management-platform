@@ -21,7 +21,8 @@ public record VoiceTransactionAuthPolicy(
         int guestBookingCapabilityTtlMinutes,
         TrustMode trustMode,
         boolean bookingEnabled,
-        boolean otpRequired
+        boolean otpRequired,
+        boolean voiceQuickRegistrationEnabled
 ) {
     public enum AuthenticationMode { OTP_REQUIRED, DISABLED }
     public enum TrustMode { PREVERIFIED_PHONE_ALLOWED, OTP_REQUIRED, DISABLED }

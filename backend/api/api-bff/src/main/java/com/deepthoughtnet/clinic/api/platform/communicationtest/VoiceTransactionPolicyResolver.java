@@ -34,12 +34,15 @@ public class VoiceTransactionPolicyResolver {
         boolean guestBooking = value(clinic == null ? null : clinic.getGuestBookingEnabled(),
                 tenant == null ? null : tenant.getGuestBookingEnabled(), operatorProperties.getGuestBookingEnabled(),
                 app.getGuestBookingEnabled(), false);
+        boolean quickRegistration = value(clinic == null ? null : clinic.getVoiceQuickRegistrationEnabled(),
+                tenant == null ? null : tenant.getVoiceQuickRegistrationEnabled(),
+                app.getVoiceQuickRegistrationEnabled(), false);
         boolean otpRequired = resolveOtpRequired(clinic, tenant, app);
         boolean configuredEnabled = value(clinic == null ? null : clinic.getEnabled(),
                 tenant == null ? null : tenant.getEnabled(), app.getEnabled(), false);
         // The legacy master switch remains compatible, while the simple operation flags
         // are sufficient to activate their own guarded Voice path.
-        boolean enabled = configuredEnabled || bookingEnabled || guestBooking;
+        boolean enabled = configuredEnabled || bookingEnabled || guestBooking || quickRegistration;
         AuthenticationMode mode = otpRequired ? AuthenticationMode.OTP_REQUIRED : AuthenticationMode.DISABLED;
         VoiceTransactionAuthPolicy.TrustMode configuredTrustMode = value(
                 clinic == null ? null : clinic.getTrustMode(), tenant == null ? null : tenant.getTrustMode(),
@@ -83,7 +86,7 @@ public class VoiceTransactionPolicyResolver {
         boolean operationExecutionEnabled = operation == Operation.BOOK_APPOINTMENT && bookingEnabled;
         return new VoiceTransactionAuthPolicy(enabled, mode, ttl, booking, lookup, cancellation, reschedule,
                 false, scope, operation, required, operationExecutionEnabled, decision, guestBooking, minimalRegistration,
-                confirmMobile, guestTtl, trustMode, bookingEnabled, otpRequired);
+                confirmMobile, guestTtl, trustMode, bookingEnabled, otpRequired, quickRegistration);
     }
 
     private VoiceTransactionAuthProperties.PolicyOverride find(
@@ -113,7 +116,7 @@ public class VoiceTransactionPolicyResolver {
                 || value.getMinimalRegistrationEnabled() != null
                 || value.getGuestBookingRequiresMobileConfirmation() != null
                 || value.getGuestBookingCapabilityTtlMinutes() != null || value.getBookingEnabled() != null
-                || value.getOtpRequired() != null);
+                || value.getOtpRequired() != null || value.getVoiceQuickRegistrationEnabled() != null);
     }
 
     private boolean resolveOtpRequired(VoiceTransactionAuthProperties.PolicyOverride clinic,

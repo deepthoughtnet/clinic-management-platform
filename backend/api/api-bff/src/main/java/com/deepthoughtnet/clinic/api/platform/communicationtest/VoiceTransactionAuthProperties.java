@@ -31,6 +31,7 @@ public class VoiceTransactionAuthProperties {
         private Boolean cancellationAuthRequired;
         private Boolean rescheduleAuthRequired;
         private Boolean guestBookingEnabled;
+        private Boolean voiceQuickRegistrationEnabled;
         private Boolean minimalRegistrationEnabled;
         private Boolean guestBookingRequiresMobileConfirmation;
         private Integer guestBookingCapabilityTtlMinutes;
@@ -55,6 +56,8 @@ public class VoiceTransactionAuthProperties {
         public void setRescheduleAuthRequired(Boolean value) { rescheduleAuthRequired = value; }
         public Boolean getGuestBookingEnabled() { return guestBookingEnabled; }
         public void setGuestBookingEnabled(Boolean value) { guestBookingEnabled = value; }
+        public Boolean getVoiceQuickRegistrationEnabled() { return voiceQuickRegistrationEnabled; }
+        public void setVoiceQuickRegistrationEnabled(Boolean value) { voiceQuickRegistrationEnabled = value; }
         public Boolean getMinimalRegistrationEnabled() { return minimalRegistrationEnabled; }
         public void setMinimalRegistrationEnabled(Boolean value) { minimalRegistrationEnabled = value; }
         public Boolean getGuestBookingRequiresMobileConfirmation() { return guestBookingRequiresMobileConfirmation; }

@@ -67,6 +67,7 @@ clinic:
           cancellation-auth-required: ${AIVA_VOICE_CANCELLATION_AUTH_REQUIRED:true}
           reschedule-auth-required: ${AIVA_VOICE_RESCHEDULE_AUTH_REQUIRED:true}
           guest-booking-enabled: ${AIVA_VOICE_GUEST_BOOKING_ENABLED:false}
+          voice-quick-registration-enabled: ${AIVA_VOICE_QUICK_REGISTRATION_ENABLED:false}
           minimal-registration-enabled: ${AIVA_VOICE_MINIMAL_REGISTRATION_ENABLED:true}
           guest-booking-requires-mobile-confirmation: ${AIVA_VOICE_GUEST_BOOKING_REQUIRES_MOBILE_CONFIRMATION:true}
           guest-booking-capability-ttl-minutes: ${AIVA_VOICE_GUEST_BOOKING_CAPABILITY_TTL_MINUTES:15}
@@ -178,6 +179,11 @@ clinic:
         fallback: ${CLINIC_CAREPILOT_VOICE_PROVIDER_FALLBACK:none}
         failover-enabled: ${CLINIC_CAREPILOT_VOICE_PROVIDER_FAILOVER_ENABLED:false}
     voice:
+      inbound:
+        worker-core-size: ${CLINIC_CAREPILOT_VOICE_INBOUND_WORKER_CORE_SIZE:4}
+        worker-max-size: ${CLINIC_CAREPILOT_VOICE_INBOUND_WORKER_MAX_SIZE:8}
+        worker-queue-capacity: ${CLINIC_CAREPILOT_VOICE_INBOUND_WORKER_QUEUE_CAPACITY:16}
+        timer-threads: ${CLINIC_CAREPILOT_VOICE_INBOUND_TIMER_THREADS:2}
       dotvoice:
         enabled: ${DOTVOICE_ENABLED:false}
         api-key: ${DOTVOICE_API_KEY:}
@@ -191,6 +197,7 @@ clinic:
         stream-url: ${DOTVOICE_STREAM_URL:ws://rec.mindserv.co:8000/vendor/stream}
         stream-timeout-ms: ${DOTVOICE_STREAM_TIMEOUT_MS:30000}
         media-frame-duration-ms: ${DOTVOICE_MEDIA_FRAME_DURATION_MS:20}
+        playback-queue-capacity: ${DOTVOICE_PLAYBACK_QUEUE_CAPACITY:32}
     reminders:
       enabled: ${CLINIC_CAREPILOT_REMINDERS_ENABLED:false}
       fixed-delay: ${CLINIC_CAREPILOT_REMINDERS_FIXED_DELAY:PT15M}

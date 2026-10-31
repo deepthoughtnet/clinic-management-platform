@@ -29,6 +29,10 @@ class AivaV2TransactionalExecutionBoundary {
         return kernel.resolveVoiceProviderEvidence(tenantId, evidence);
     }
 
+    AivaV2Models.ProviderSearchResult resolveVoiceProviderSpecialty(java.util.UUID tenantId, String specialty) {
+        return kernel.resolveVoiceProviderSpecialty(tenantId, specialty);
+    }
+
     Result execute(AivaExecutionContext executionContext, SessionProjection session,
                    ConversationDecision decision, AivaV2TemporalResolution temporal,
                    ZoneId timezone, String turnId, boolean ambiguousTime) {

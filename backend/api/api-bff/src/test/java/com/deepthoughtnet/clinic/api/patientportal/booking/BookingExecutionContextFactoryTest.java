@@ -177,6 +177,32 @@ class BookingExecutionContextFactoryTest {
     }
 
     @Test
+    void quickRegisteredCallerHasUnverifiedCallBoundIdentityAndOnlyNewBookingContext() {
+        UUID interaction = UUID.randomUUID();
+        Instant consentAt = Instant.now();
+        AivaExecutionContext execution = new AivaExecutionContext(tenant, patient, "VOICE", "hi-IN",
+                ZoneId.of("Asia/Kolkata"), "quick-call", interaction, null, null, Set.of(), "quick-call", "corr",
+                AivaTransactionAuthorization.unauthenticated(tenant, "quick-call", patient));
+        VoiceGuestRegistrationState registration = new VoiceGuestRegistrationState(
+                VoiceGuestRegistrationStatus.CAPABILITY_GRANTED, tenant, patient, "quick-call", interaction,
+                Instant.now().plusSeconds(300), true, "Ashish", 42, consentAt);
+
+        BookingExecutionContext result = factory.quickRegisteredVoice(execution, registration);
+        VoiceIdentityTrust trust = VoiceIdentityTrust.registeredUnverified();
+
+        assertThat(result.actorType()).isEqualTo(BookingExecutionContext.ActorType.VOICE_REGISTERED_UNVERIFIED);
+        assertThat(result.authenticationState()).isEqualTo(BookingExecutionContext.AuthenticationState.REGISTERED_UNVERIFIED);
+        assertThat(result.allowedOperation()).isEqualTo(BookingExecutionContext.Operation.BOOK_APPOINTMENT);
+        assertThat(result.authorizationSource()).isEqualTo("VOICE_RESTRICTED_NEW_BOOKING");
+        assertThat(result.actorId()).isNull();
+        assertThat(execution.transactionAuthorization().authenticated()).isFalse();
+        assertThat(execution.transactionAuthorization().authorizationSource()).isNotEqualTo("OTP");
+        assertThat(trust.identityState()).isEqualTo(VoiceIdentityTrust.IdentityState.REGISTERED_UNVERIFIED);
+        assertThat(trust.trustSource()).isEqualTo(VoiceIdentityTrust.TrustSource.NONE);
+        assertThat(trust.phoneBindingVerified()).isFalse();
+    }
+
+    @Test
     void registeredUnverifiedCanUseRestrictedBookingWithoutGuestRegistrationOrOtpEvidence() {
         AivaExecutionContext execution = new AivaExecutionContext(tenant, patient, "VOICE", "hi-IN",
                 ZoneId.of("UTC"), "call-unverified", null, null, null, Set.of(), "call-unverified", null,

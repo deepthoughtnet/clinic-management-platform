@@ -41,6 +41,7 @@ class VoiceTransactionPolicyResolverTest {
         assertThat(policy.bookingExecutionAllowed()).isFalse();
         assertThat(policy.challengeAllowed()).isFalse();
         assertThat(policy.guestBookingEnabled()).isFalse();
+        assertThat(policy.voiceQuickRegistrationEnabled()).isFalse();
         assertThat(policy.minimalRegistrationEnabled()).isTrue();
         assertThat(policy.guestBookingRequiresMobileConfirmation()).isTrue();
         assertThat(policy.guestBookingCapabilityTtlMinutes()).isEqualTo(15);
@@ -238,6 +239,24 @@ class VoiceTransactionPolicyResolverTest {
     }
 
     @Test
+    void quickRegistrationHasItsOwnTenantOverrideAndDoesNotReuseGuestBookingFlag() {
+        UUID enabledTenant = UUID.randomUUID();
+        VoiceTransactionAuthProperties properties = new VoiceTransactionAuthProperties();
+        properties.getDefaultPolicy().setGuestBookingEnabled(true);
+        VoiceTransactionAuthProperties.PolicyOverride tenant = new VoiceTransactionAuthProperties.PolicyOverride();
+        tenant.setVoiceQuickRegistrationEnabled(true);
+        properties.setTenantOverrides(Map.of(enabledTenant.toString(), tenant));
+        VoiceTransactionPolicyResolver resolver = new VoiceTransactionPolicyResolver(properties);
+
+        assertThat(resolver.resolve(enabledTenant, null, Operation.BOOK_APPOINTMENT)
+                .voiceQuickRegistrationEnabled()).isTrue();
+        assertThat(resolver.resolve(UUID.randomUUID(), null, Operation.BOOK_APPOINTMENT)
+                .voiceQuickRegistrationEnabled()).isFalse();
+        assertThat(resolver.resolve(UUID.randomUUID(), null, Operation.BOOK_APPOINTMENT)
+                .guestBookingEnabled()).isTrue();
+    }
+
+    @Test
     void bookingExecutionHasIndependentFailClosedClinicTenantApplicationPrecedence() {
         UUID tenantId = UUID.randomUUID();
         UUID clinicId = UUID.randomUUID();
@@ -329,6 +348,33 @@ class VoiceTransactionPolicyResolverTest {
                     assertThat(resolver.resolve(disabledTenantId, null, Operation.BOOK_APPOINTMENT).bookingExecutionAllowed()).isFalse();
                     assertThat(resolver.resolve(tenantId, null, Operation.BOOK_APPOINTMENT).otpRequired()).isFalse();
                     assertThat(resolver.resolve(tenantId, clinicId, Operation.BOOK_APPOINTMENT).bookingEnabled()).isFalse();
+                });
+    }
+
+    @Test
+    void jeevanamUatQuickRegistrationOverrideIsTenantScopedAndDoesNotEnableGuestBooking() {
+        UUID jeevanamUatTenant = UUID.fromString("4b1e2915-6d35-4a00-b9f8-2f0cc3bccb1f");
+        UUID tenantWithoutOverride = UUID.randomUUID();
+        new ApplicationContextRunner().withUserConfiguration(PolicyConfiguration.class)
+                .withPropertyValues(
+                        "clinic.aiva.voice.transaction-auth.default-policy.voice-quick-registration-enabled=false",
+                        "clinic.aiva.voice.transaction-auth.default-policy.guest-booking-enabled=false",
+                        "clinic.aiva.voice.transaction-auth.tenant-overrides." + jeevanamUatTenant
+                                + ".booking-enabled=true",
+                        "clinic.aiva.voice.transaction-auth.tenant-overrides." + jeevanamUatTenant
+                                + ".guest-booking-enabled=false",
+                        "clinic.aiva.voice.transaction-auth.tenant-overrides." + jeevanamUatTenant
+                                + ".voice-quick-registration-enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    VoiceTransactionPolicyResolver resolver = context.getBean(VoiceTransactionPolicyResolver.class);
+                    var jeevanamPolicy = resolver.resolve(jeevanamUatTenant, null, Operation.BOOK_APPOINTMENT);
+                    var defaultPolicy = resolver.resolve(tenantWithoutOverride, null, Operation.BOOK_APPOINTMENT);
+
+                    assertThat(jeevanamPolicy.voiceQuickRegistrationEnabled()).isTrue();
+                    assertThat(jeevanamPolicy.guestBookingEnabled()).isFalse();
+                    assertThat(defaultPolicy.voiceQuickRegistrationEnabled()).isFalse();
+                    assertThat(defaultPolicy.guestBookingEnabled()).isFalse();
                 });
     }
 

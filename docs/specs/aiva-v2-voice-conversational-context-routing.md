@@ -16,6 +16,20 @@ This specification covers deterministic conversational routing and session conte
 - Context inspection, discovery, and explicit date/daypart changes are handled before generic active-booking continuation. Read-only inspection never invokes booking mutation. Provider/date/daypart changes clear selected slots as appropriate; pagination preserves the existing provider/date/daypart and advances the retained page once.
 - Courtesy close and unsupported protected-action routing retain their existing precedence and behavior.
 
+## Conversation controls and collection precedence
+
+Global conversation controls are resolved before state-specific collection handling, including `AWAIT_SLOT`. The order is courtesy close, cancellation of the current uncommitted booking draft, context changes, read-only inspection, repeat controls, pending clarification answers, state-specific answers, then generic interpretation/recovery. Existing appointment cancellation remains unsupported and cannot be mistaken for draft cancellation.
+
+- Repeating while a slot page is active renders the same retained canonical page and leaves its offset unchanged. `SHOW_MORE` is distinct and advances the retained page exactly once without reloading availability when the snapshot remains valid.
+- Repeating in date, daypart, provider, provider-switch, or final-confirmation state repeats that exact prompt/summary without mutating context.
+- Slot-page controls accept Hindi STT variants such as “फिर से स्लॉट बताइए”, slot declines including “इनमें से कोई नहीं”, and provider/date inspection questions including “ये किस डॉक्टर के स्लाइस है?”. A retained display page is the source of truth for provider/date answers.
+- “मुझे डॉक्टर बदलना है” is recognized as a control before provider extraction. Relative chained dates (“उसके अगले दिन”, “एक दिन बाद”, “next day”) resolve from the retained user-selected availability date. Time ranges are filtered against canonical availability when supported; otherwise the response remains localized.
+- A combined current-draft cancellation and courtesy close clears the uncommitted draft and closes the call. Compatibility fallbacks for slot selection follow the persisted Hindi/Hinglish presentation mode.
+- Provider/date/daypart changes preserve other valid context and invalidate provider/date/daypart-bound slot state. Provider changes remain subject to the existing confirmation and canonical resolution flow.
+- Explicit discovery and context-inspection turns stay read-only during a draft. Inspection answers the active provider, retained date, or selected time without modifying the draft.
+- Declining currently displayed slot options is a handled conversational action and offers more slots, context changes, or stopping the current booking.
+- A read-only date may seed a booking draft only when its persisted availability cursor marks user-selected date context and the snapshot is still valid. The adapter does not promote a system/default date into the booking draft.
+
 ## Language behavior
 
 Every response uses the persisted session presentation mode. Hindi fallback responses are Hindi-rendered, including the generic booking-preparation boundary; Hindi daypart labels are `सुबह`, `दोपहर`, and `शाम`. Hinglish and English retain their existing presentation conventions.

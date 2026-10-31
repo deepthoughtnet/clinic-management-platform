@@ -21,6 +21,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -30,16 +31,33 @@ class AivaV2VoiceConversationAdapterTest {
 
     @Test
     void unsupportedProtectedVoiceRequestsAreClassifiedWithoutBusinessToolExecution() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
         AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
-                new AivaV2SessionStore(Clock.systemUTC()), mock(AivaV2ConversationDecisionGateway.class),
+                store, mock(AivaV2ConversationDecisionGateway.class),
                 LanguageAdapterRegistry.defaults());
-        AivaExecutionContext context = context("unsupported-scope");
+        UUID patient = UUID.randomUUID();
+        UUID interaction = UUID.randomUUID();
+        AivaExecutionContext context = new AivaExecutionContext(TENANT, patient, "VOICE", "hi-IN",
+                ZoneId.of("Asia/Kolkata"), "unsupported-scope", interaction, null, null,
+                Set.of("BOOK_APPOINTMENT"), "unsupported-scope", "corr",
+                AivaTransactionAuthorization.unauthenticated(TENANT, "unsupported-scope", patient));
+        store.update("VOICE|" + TENANT + "|unsupported-scope", ignored ->
+                new SessionProjection("unsupported-scope", patient, TENANT.toString(), null, null,
+                        null, null, null, Instant.now().plusSeconds(600)).withVoiceGuestRegistrationState(
+                                new AivaV2Models.VoiceGuestRegistrationState(
+                                        AivaV2Models.VoiceGuestRegistrationStatus.CAPABILITY_GRANTED, TENANT,
+                                        patient, "unsupported-scope", interaction, Instant.now().plusSeconds(300), true,
+                                        "Ashish", 42, Instant.now())));
 
         var reschedule = adapter.unsupportedVoiceScopeRequest(context, "appointment reschedule karna hai");
         var cancel = adapter.unsupportedVoiceScopeRequest(context, "appointment cancel karna hai");
         var reports = adapter.unsupportedVoiceScopeRequest(context, "meri reports batao");
         var prescription = adapter.unsupportedVoiceScopeRequest(context, "last prescription kya thi");
         var consultation = adapter.unsupportedVoiceScopeRequest(context, "purani consultation dikhao");
+        var labs = adapter.unsupportedVoiceScopeRequest(context, "show my lab results");
+        var clinicalHistory = adapter.unsupportedVoiceScopeRequest(context, "show my clinical history");
+        var appointmentDetails = adapter.unsupportedVoiceScopeRequest(context, "show my appointment details");
+        var appointmentHistory = adapter.unsupportedVoiceScopeRequest(context, "show my appointment history");
 
         assertThat(reschedule.category()).isEqualTo("RESCHEDULE_NOT_SUPPORTED");
         assertThat(reschedule.response()).contains("Care");
@@ -48,7 +66,13 @@ class AivaV2VoiceConversationAdapterTest {
         assertThat(reports.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
         assertThat(prescription.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
         assertThat(consultation.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(labs.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(clinicalHistory.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(appointmentDetails.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
+        assertThat(appointmentHistory.category()).isEqualTo("PATIENT_DATA_NOT_SUPPORTED");
         assertThat(reports.response()).contains("Care");
+        assertThat(context.transactionAuthorization().authenticated()).isFalse();
+        assertThat(context.transactionAuthorization().grantedCapabilities()).isEmpty();
     }
 
     @Test
@@ -470,6 +494,33 @@ class AivaV2VoiceConversationAdapterTest {
             assertThat(second.intent()).isEqualTo("CONSULT_DOCTOR");
             assertThat(second.mutationBlocked()).isTrue();
         }
+    }
+
+    @Test
+    void unsupportedInitialScriptDoesNotLockEnglishBeforeHindiAndEstablishedHindiRemainsSticky() {
+        AivaV2SessionStore store = new AivaV2SessionStore(Clock.systemUTC());
+        AivaV2VoiceConversationAdapter adapter = new AivaV2VoiceConversationAdapter(
+                store, mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
+        String callId = "unknown-script-before-hindi";
+        AivaExecutionContext context = context(callId, "en-IN");
+        String key = "VOICE|" + TENANT + "|" + callId;
+
+        var unsupported = adapter.continueTurn(context, "ஓகே பண்ணிடுச்சு.",
+                (tool, execution, input) -> { throw new AssertionError("unsupported initial speech must not invoke a tool"); });
+        assertThat(unsupported.intent()).isEqualTo("UNKNOWN");
+        assertThat(store.find(key).orElseThrow().presentationMode()).isNull();
+
+        adapter.continueTurn(context, "मुझे डॉक्टर का अपॉइंटमेंट चाहिए।",
+                (tool, execution, input) -> new AivaV2VoiceToolExecutor.ToolResult(
+                        true, true, List.of(), 0, 0, "sourceCount=0", List.of()));
+        assertThat(store.find(key).orElseThrow().presentationMode())
+                .isEqualTo(AivaV2Models.VoicePresentationMode.HINDI);
+
+        adapter.continueTurn(context, "I need an appointment with a doctor.",
+                (tool, execution, input) -> new AivaV2VoiceToolExecutor.ToolResult(
+                        true, true, List.of(), 0, 0, "sourceCount=0", List.of()));
+        assertThat(store.find(key).orElseThrow().presentationMode())
+                .isEqualTo(AivaV2Models.VoicePresentationMode.HINDI);
     }
 
     @Test
@@ -1569,10 +1620,12 @@ class AivaV2VoiceConversationAdapterTest {
 
     @Test
     void absoluteDateAnswerRetainsDoctorForHindiEnglishAndHinglishSlotClarifications() {
+        LocalDate targetDate = nextOctoberTwentyEighth(context("absolute-date-reference").timezone());
         for (String[] sample : new String[][]{
-                {"hi-IN", "डॉक्टर रवि मेहता का स्लॉट बताइए", "28 अक्टूबर 2026"},
-                {"en-IN", "Show Ravi Mehta's slots", "October 28, 2026"},
-                {"hi-IN", "Ravi ke slots dikhao", "28 October"}}) {
+                {"hi-IN", "डॉक्टर रवि मेहता का स्लॉट बताइए", "28 अक्टूबर " + targetDate.getYear()},
+                {"en-IN", "Show Ravi Mehta's slots", targetDate.format(
+                        java.time.format.DateTimeFormatter.ofPattern("MMMM d, uuuu", Locale.US))},
+                {"hi-IN", "Ravi ke slots dikhao", "28 October " + targetDate.getYear()}}) {
             var adapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                     mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
             String call = "absolute-date-keeps-doctor-" + sample[1].hashCode();
@@ -1589,7 +1642,7 @@ class AivaV2VoiceConversationAdapterTest {
             });
             assertThat(resumed.tool()).as(sample[2]).isEqualTo("FIND_SLOTS");
             assertThat(captured.get().doctorId()).as(sample[2]).isEqualTo("doctor-ravi");
-            assertThat(captured.get().date()).as(sample[2]).isEqualTo(LocalDate.of(2026, 10, 28));
+            assertThat(captured.get().date()).as(sample[2]).isEqualTo(targetDate);
         }
     }
 
@@ -1784,7 +1837,10 @@ class AivaV2VoiceConversationAdapterTest {
         var bookingAdapter = new AivaV2VoiceConversationAdapter(new AivaV2SessionStore(Clock.systemUTC()),
                 mock(AivaV2ConversationDecisionGateway.class), LanguageAdapterRegistry.defaults());
         String bookingCall = "appointment-clarification-blocked-booking";
-        bookingAdapter.continueTurn(context(bookingCall), "Doctor Ravi Mehta's appointment on October 28, 2026",
+        LocalDate explicitDate = LocalDate.now(context(bookingCall).timezone()).plusDays(3);
+        String explicitDateText = explicitDate.format(
+                java.time.format.DateTimeFormatter.ofPattern("MMMM d, uuuu", Locale.US));
+        bookingAdapter.continueTurn(context(bookingCall), "Doctor Ravi Mehta's appointment on " + explicitDateText,
                 (tool, execution, input) -> { throw new AssertionError("clarification must not execute a tool"); });
         var blocked = bookingAdapter.continueTurn(context(bookingCall), "book करना है",
                 (tool, execution, input) -> { throw new AssertionError("booking remains blocked"); });
@@ -1792,10 +1848,16 @@ class AivaV2VoiceConversationAdapterTest {
         assertThat(blocked.policyDecision()).isEqualTo("BLOCKED_READ_ONLY");
         var next = bookingAdapter.continueTurn(context(bookingCall), "slots बताइए", (tool, execution, input) -> {
             assertThat(input.query()).contains("Ravi Mehta");
-            assertThat(input.date()).isEqualTo(LocalDate.of(2026, 10, 28));
+            assertThat(input.date()).isEqualTo(explicitDate);
             return new AivaV2VoiceToolExecutor.ToolResult(true, true, List.of(), 1, 1, "slots", List.of());
         });
         assertThat(next.intent()).isEqualTo("FIND_SLOTS");
+    }
+
+    private static LocalDate nextOctoberTwentyEighth(ZoneId zone) {
+        LocalDate today = LocalDate.now(zone);
+        LocalDate next = LocalDate.of(today.getYear(), 10, 28);
+        return next.isAfter(today) ? next : next.plusYears(1);
     }
 
     private static AivaV2VoiceToolExecutor.ToolResult availabilityResult(AivaV2VoiceToolExecutor.ToolInput input,

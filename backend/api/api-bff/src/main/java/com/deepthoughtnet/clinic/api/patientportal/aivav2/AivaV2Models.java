@@ -967,7 +967,7 @@ public final class AivaV2Models {
         }
     }
 
-    /** PII-free guest registration progress and narrow capability metadata. */
+    /** Call-bound quick-registration progress and narrow booking capability metadata. */
     public record VoiceGuestRegistrationState(
             VoiceGuestRegistrationStatus status,
             UUID tenantId,
@@ -975,16 +975,38 @@ public final class AivaV2Models {
             String providerCallId,
             UUID interactionId,
             Instant capabilityExpiresAt,
-            boolean guestBookingCapabilityGranted
+            boolean guestBookingCapabilityGranted,
+            String capturedFirstName,
+            Integer capturedAgeYears,
+            Instant consentTimestamp,
+            boolean consentGiven,
+            String consentSource
     ) {
+        public VoiceGuestRegistrationState(VoiceGuestRegistrationStatus status, UUID tenantId, UUID patientId,
+                String providerCallId, UUID interactionId, Instant capabilityExpiresAt,
+                boolean guestBookingCapabilityGranted) {
+            this(status, tenantId, patientId, providerCallId, interactionId, capabilityExpiresAt,
+                    guestBookingCapabilityGranted, null, null, null, false, null);
+        }
+        public VoiceGuestRegistrationState(VoiceGuestRegistrationStatus status, UUID tenantId, UUID patientId,
+                String providerCallId, UUID interactionId, Instant capabilityExpiresAt,
+                boolean guestBookingCapabilityGranted, String capturedFirstName, Integer capturedAgeYears,
+                Instant consentTimestamp) {
+            this(status, tenantId, patientId, providerCallId, interactionId, capabilityExpiresAt,
+                    guestBookingCapabilityGranted, capturedFirstName, capturedAgeYears, consentTimestamp,
+                    consentTimestamp != null, consentTimestamp == null ? null : "VOICE");
+        }
         public VoiceGuestRegistrationState {
             status = status == null ? VoiceGuestRegistrationStatus.NOT_STARTED : status;
+            if (consentTimestamp != null) consentGiven = true;
+            consentSource = consentGiven && consentSource == null ? "VOICE" : consentSource;
+            if (!consentGiven) consentSource = null;
         }
     }
 
     public enum VoiceGuestRegistrationStatus {
-        NOT_STARTED, CONSENT_REQUESTED, MOBILE_CONFIRMATION_REQUESTED, COLLECTING_DETAILS,
-        DUPLICATE_CHECK, CREATED, CAPABILITY_GRANTED, FAILED
+        NOT_STARTED, CONSENT_REQUESTED, MOBILE_CONFIRMATION_REQUESTED, COLLECTING_DETAILS, AWAITING_AGE,
+        DUPLICATE_CHECK, CREATED, CAPABILITY_GRANTED, DECLINED, FAILED
     }
 
     public record TemporalClarification(String kind, List<String> candidates, Operation originatingOperation,

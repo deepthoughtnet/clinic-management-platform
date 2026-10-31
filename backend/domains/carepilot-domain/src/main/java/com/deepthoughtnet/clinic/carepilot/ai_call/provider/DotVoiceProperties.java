@@ -17,6 +17,7 @@ public class DotVoiceProperties {
     private String streamUrl;
     private int streamTimeoutMs = 30_000;
     private int mediaFrameDurationMs = 20;
+    private int playbackQueueCapacity = 32;
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -45,6 +46,8 @@ public class DotVoiceProperties {
     public void setStreamTimeoutMs(int streamTimeoutMs) { this.streamTimeoutMs = streamTimeoutMs; }
     public int getMediaFrameDurationMs() { return mediaFrameDurationMs; }
     public void setMediaFrameDurationMs(int mediaFrameDurationMs) { this.mediaFrameDurationMs = mediaFrameDurationMs; }
+    public int getPlaybackQueueCapacity() { return playbackQueueCapacity; }
+    public void setPlaybackQueueCapacity(int playbackQueueCapacity) { this.playbackQueueCapacity = playbackQueueCapacity; }
 
     public boolean isConfigured() {
         return enabled && hasText(apiKey) && hasText(baseUrl) && hasText(fromNumber) && hasText(trunk)

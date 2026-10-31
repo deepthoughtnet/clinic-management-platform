@@ -191,12 +191,23 @@ public class AivaV2VoiceConversationAdapter {
     }
 
     private AivaV2Models.VoicePresentationMode inferPresentationMode(NormalizedUserTurn turn) {
-        if (turn.rawText().matches(".*[\\u0900-\\u097F].*")) {
-            boolean mixedIndianSpeech = turn.rawText().matches("(?iu).*(?:\\b(?:kal|parso|aaj|aur|batao|dikhao|karo|doctor|pediatric|slot|slots|morning|evening|subah|shaam|baje|appointment|ka naam)\\b).*" );
+        String rawText = turn.rawText();
+        if (rawText.matches(".*[\\u0900-\\u097F].*")) {
+            boolean mixedIndianSpeech = rawText.matches("(?iu).*(?:\\b(?:kal|parso|aaj|aur|batao|dikhao|karo|doctor|pediatric|slot|slots|morning|evening|subah|shaam|baje|appointment|ka naam)\\b).*" );
             return mixedIndianSpeech ? AivaV2Models.VoicePresentationMode.HINGLISH
                     : AivaV2Models.VoicePresentationMode.HINDI;
         }
-        if (turn.rawText().matches("(?iu).*(?:^|[^\\p{L}\\p{N}])(?:kal|parso|aaj|aur|wala|waala|wali|wale|batao|dikhao|karo|ka|ke|ki|hain|hai|mein|subah|shaam|saat|tees)(?:$|[^\\p{L}\\p{N}]).*"))
+        boolean hasLetter = false;
+        for (int offset = 0; offset < rawText.length();) {
+            int codePoint = rawText.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            if (!Character.isLetter(codePoint)) continue;
+            hasLetter = true;
+            Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
+            if (script != Character.UnicodeScript.LATIN) return null;
+        }
+        if (!hasLetter) return null;
+        if (rawText.matches("(?iu).*(?:^|[^\\p{L}\\p{N}])(?:kal|parso|aaj|aur|wala|waala|wali|wale|batao|dikhao|karo|ka|ke|ki|hain|hai|mein|subah|shaam|saat|tees)(?:$|[^\\p{L}\\p{N}]).*"))
             return AivaV2Models.VoicePresentationMode.HINGLISH;
         return AivaV2Models.VoicePresentationMode.ENGLISH;
     }
@@ -271,16 +282,21 @@ public class AivaV2VoiceConversationAdapter {
         NormalizedUserTurn turn = normalizeVoiceTurn(context, session, transcript);
         // Courtesy controls take precedence over every active booking continuation.
         if (isClosing(turn)) return false;
+        if (isPreparedBookingCancellation(session, turn)) return true;
         // Explicit discovery and context inspection stay on the read-only Voice path,
         // even while a transactional draft or clarification is active.
         if ((isExplicitReadOnlyDiscovery(turn) && !isExplicitProviderSwitchRequest(session, turn))
-                || isProviderContextInspection(turn)) return false;
+                || isProviderContextInspection(turn) || isDateContextInspection(turn)
+                || isSelectedSlotInspection(turn)) return false;
+        if (hasRetainedReadOnlySlotPage(session) && parsedTimeRange(turn) != null) return false;
         if (isRestartBookingRequest(turn)) return session.activeDraft() != null
+                || session.pendingConfirmation() != null || session.voiceClarificationState() != null;
+        if (isRepeatRequest(turn)) return session.activeDraft() != null
                 || session.pendingConfirmation() != null || session.voiceClarificationState() != null;
         if (isContextChangeCommand(turn)) return session.activeDraft() != null
                 || session.pendingConfirmation() != null || session.voiceClarificationState() != null
                 || hasRetainedReadOnlySlotPage(session);
-        if (hasRetainedReadOnlySlotPage(session) && !isShowMore(turn)
+        if (hasRetainedReadOnlySlotPage(session) && !isShowMore(turn) && parsedTimeRange(turn) == null
                 && retainedSlotContextMatches(session.latestAvailabilityResult(), turn)
                 && !hasConflictingProviderEvidence(session, turn)) {
             AivaV2DisplayedSlotSelectionResolver.Resolution selection =
@@ -321,13 +337,19 @@ public class AivaV2VoiceConversationAdapter {
         if (context == null || !StringUtils.hasText(transcript)) return null;
         SessionProjection session = sessionStore.find(sessionKey(context)).orElse(null);
         NormalizedUserTurn turn = normalizeVoiceTurn(context, session, transcript);
+        if (session != null && isPreparedBookingCancellation(session, turn)) return null;
+        if (isProviderContextInspection(turn) || isDateContextInspection(turn)
+                || isSelectedSlotInspection(turn) || isRepeatRequest(turn)
+                || session != null && session.activeDraft() != null
+                && (isContextChangeCommand(turn) || isRestartBookingRequest(turn)
+                || isDeclineCurrentSlotOptions(session, turn))) return null;
         String category = switch (turn.intent()) {
             case RESCHEDULE -> "RESCHEDULE_NOT_SUPPORTED";
             case CANCELLATION -> "CANCEL_NOT_SUPPORTED";
             default -> null;
         };
         if (category == null && ((turn.intent() == NormalizedUserTurn.Intent.LOOKUP
-                && !isDatedAppointmentAvailability(turn))
+                && !isDatedAppointmentAvailability(turn) && !hasExplicitBookingVerb(turn))
                 || isPatientOwnedAppointmentLookup(turn) || requestsSensitivePatientData(turn))) {
             category = "PATIENT_DATA_NOT_SUPPORTED";
         }
@@ -485,7 +507,173 @@ public class AivaV2VoiceConversationAdapter {
                 + "\\bwhich\\s+doctor\\s+(?:did\\s+i\\s+)?select(?:ed)?\\b|"
                 + "\\bwhat\\s+doctor\\s+is\\s+selected\\b|\\bwhich\\s+doctor\\s+did\\s+i\\s+choose\\b|"
                 + "कौन\\s+सा\\s+डॉक्टर\\s+selected|किस\\s+डॉक्टर\\s+का\\s+(?:slot|स्लॉट)|"
+                + "ये\\s+किस\\s+डॉक्टर\\s+का\\s+appointment|ये\\s+किस\\s+डॉक्टर\\s+के\\s+(?:slots?|स्लाइस|स्लॉट्स?)"
+                + "(?:\\s+हैं|\\s+है)?|किस\\s+doctor\\s+के\\s+slots|"
+                + "कौन\\s+सा\\s+time\\s+select\\s+किया|"
                 + "कौन\\s+से\\s+डॉक्टर\\s+चुने|कौन\\s+सा\\s+डॉक्टर\\s+चुना).*" );
+    }
+
+    private boolean isDateContextInspection(NormalizedUserTurn turn) {
+        if (turn == null || !StringUtils.hasText(turn.rawText())) return false;
+        String text = turn.rawText().toLowerCase(Locale.ROOT);
+        return text.matches("(?s).*(?:\\bwhich\\s+date\\b|\\bwhat\\s+date\\b|कौन\\s+सी\\s+तारीख|किस\\s+तारीख).*" );
+    }
+
+    private boolean isSelectedSlotInspection(NormalizedUserTurn turn) {
+        if (turn == null || !StringUtils.hasText(turn.rawText())) return false;
+        String text = turn.rawText().toLowerCase(Locale.ROOT);
+        return text.matches("(?s).*(?:\\bwhich\\s+time\\s+(?:did\\s+i\\s+)?select(?:ed)?\\b|"
+                + "\\bwhat\\s+time\\s+is\\s+selected\\b|कौन\\s+सा\\s+time\\s+select\\s+किया|"
+                + "कौन\\s+सा\\s+समय\\s+चुना).*" );
+    }
+
+    private boolean isRepeatRequest(NormalizedUserTurn turn) {
+        if (turn == null) return false;
+        if (turn.controls().contains(DeterministicControl.REPEAT_LAST_RESPONSE)) return true;
+        String text = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT)
+                .replace('’', '\'').replaceAll("[,;.!?।]+", " ").replaceAll("\\s+", " ").trim();
+        return text.matches("(?iu).*(?:repeat(?:\\s+(?:that|the\\s+slots?|those\\s+times?|the\\s+page))?|"
+                + "say\\s+(?:those\\s+times|that)\\s+again|एक\\s+बार\\s+और\\s+बताइए|"
+                + "स्लॉट\\s+दोबारा\\s+बताइए|फिर\\s+से\\s+स्लॉट\\s+बताइए|समय\\s+फिर\\s+से\\s+बताइए|"
+                + "जो\\s+slots?\\s+बताए\\s+थे\\s+repeat\\s+करें|फिर\\s+से\\s+बताइए).*" );
+    }
+
+    private boolean isPreparedBookingCancellation(SessionProjection session, NormalizedUserTurn turn) {
+        if (session == null || turn == null || session.activeDraft() == null
+                && session.pendingConfirmation() == null) return false;
+        String text = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT)
+                .replace('’', '\'').replaceAll("[,;.!?।]+", " ").replaceAll("\\s+", " ").trim();
+        boolean existingAppointment = text.matches("(?s).*(?:\\bmy\\s+(?:existing\\s+)?appointment\\b|"
+                + "\\bappointment\\s+status\\b|मेरी\\s+(?:पुरानी\\s+)?अपॉइंटमेंट|मेरी\\s+booking).*" );
+        if (existingAppointment) return false;
+        return text.matches("(?s).*(?:appointment\\s+(?:नहीं|nahi)\\s+चाहिए|booking\\s+(?:नहीं|nahi)\\s+करनी|"
+                + "रहने\\s+दीजिए|rehne\\s+dijiye|cancel\\s+(?:this\\s+)?booking|"
+                + "(?:नहीं|nahi)\\s+बुक\\s+करना|"
+                + "do\\s+not\\s+book\\s+(?:this\\s+)?appointment|don't\\s+book\\s+(?:this\\s+)?appointment).*" );
+    }
+
+    private boolean isDeclineCurrentSlotOptions(SessionProjection session, NormalizedUserTurn turn) {
+        if (session == null || turn == null || !hasDisplayedSlotPage(session.latestAvailabilityResult())) return false;
+        String text = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
+        return text.matches("(?s).*(?:नहीं\\s+चुनना(?:\\s+चाहता|\\s+चाहती)?|इनमें\\s+से\\s+(?:कोई\\s+नहीं|नहीं)|\\bnot\\s+these\\b|"
+                + "don't\\s+want\\s+to\\s+choose|do\\s+not\\s+want\\s+to\\s+choose).*" );
+    }
+
+    private boolean hasDisplayedSlotPage(AvailabilityResult availability) {
+        return availability != null && availability.slots() != null
+                && availability.slots().size() > availability.displayOffset()
+                && availability.pageSize() > 0
+                && (availability.expiresAt() == null || availability.expiresAt().isAfter(Instant.now()));
+    }
+
+    private String repeatTarget(SessionProjection session) {
+        if (session == null) return "NONE";
+        if (session.pendingConfirmation() != null) return "FINAL_CONFIRMATION";
+        VoiceClarificationState pending = session.voiceClarificationState();
+        if (pending != null && pending.pendingProviderSwitch() != null) return "PROVIDER_SWITCH";
+        if (pending != null && ("CHANGE_PROVIDER".equals(pending.pendingAction())
+                || "PROVIDER_IDENTITY".equals(pending.pendingAction())
+                || "CONSULTATION_PROVIDER".equals(pending.pendingAction())
+                || "CONSULTATION_SPECIALTY".equals(pending.pendingAction()))) return "PROVIDER";
+        if (pending != null && "CHANGE_DATE".equals(pending.pendingAction())) return "DATE";
+        if (pending != null && "CHANGE_DAYPART".equals(pending.pendingAction())) return "DAYPART";
+        if (pending != null && pending.pendingAction() != null
+                && !"SHOW_MORE".equals(pending.pendingAction())) return pending.pendingAction();
+        if (hasDisplayedSlotPage(session.latestAvailabilityResult())
+                && (AivaV2VoiceSlotContext.isAwaitSlot(session, Instant.now())
+                || hasRetainedReadOnlySlotPage(session))) return "SLOT_PAGE";
+        AivaV2VoiceCollectionContext.State state = AivaV2VoiceCollectionContext.state(session, Instant.now());
+        return switch (state) {
+            case AWAIT_DATE -> "DATE";
+            case AWAIT_DAYPART -> "DAYPART";
+            case AWAIT_PROVIDER -> "PROVIDER";
+            case NONE -> pending == null ? "LAST_RESPONSE" : pending.pendingAction() == null
+                    ? "CLARIFICATION" : pending.pendingAction();
+        };
+    }
+
+    private String repeatCurrentPrompt(SessionProjection session, NormalizedUserTurn turn) {
+        if (session == null) return null;
+        String target = repeatTarget(session);
+        if ("SLOT_PAGE".equals(target) && hasDisplayedSlotPage(session.latestAvailabilityResult())) {
+            return retainedSlotPageResponse(session.latestAvailabilityResult(), turn);
+        }
+        if ("FINAL_CONFIRMATION".equals(target) && session.activeDraft() != null) {
+            return bookingConfirmationPrompt(session.activeDraft(), turn);
+        }
+        VoiceClarificationState pending = session.voiceClarificationState();
+        if (pending != null && pending.pendingProviderSwitch() != null) {
+            PendingProviderSwitch change = pending.pendingProviderSwitch();
+            ProviderCandidate active = session.activeDraft() == null ? session.activeVoiceDoctor()
+                    : session.activeDraft().selectedProvider();
+            return active == null ? changeProviderPrompt(turn)
+                    : providerSwitchWarning(active, change.targetDisplayName(), turn);
+        }
+        if (pending != null && "CHANGE_PROVIDER".equals(pending.pendingAction())) return changeProviderPrompt(turn);
+        if (pending != null && "CHANGE_DATE".equals(pending.pendingAction())) return changeDatePrompt(turn);
+        if (pending != null && "CHANGE_DAYPART".equals(pending.pendingAction())) return changeDaypartPrompt(turn);
+        AivaV2VoiceCollectionContext.State state = AivaV2VoiceCollectionContext.state(session, Instant.now());
+        if (state != AivaV2VoiceCollectionContext.State.NONE) return collectionPrompt(state, turn, session);
+        return null;
+    }
+
+    private String contextInspectionResponse(SessionProjection session, NormalizedUserTurn turn) {
+        ProviderCandidate active = session == null ? null : session.activeDraft() != null
+                && session.activeDraft().selectedProvider() != null
+                ? session.activeDraft().selectedProvider() : session.activeVoiceDoctor();
+        if (isProviderContextInspection(turn)) {
+            if (session != null && hasDisplayedSlotPage(session.latestAvailabilityResult())) {
+                ProviderCandidate pageProvider = providerForAvailability(session.latestAvailabilityResult(), session);
+                if (pageProvider != null) active = pageProvider;
+            }
+            return active == null ? missingDoctorClarification(turn)
+                    : doctorOwnsSlotsResponse(active.displayName(), turn);
+        }
+        AivaV2Models.BookingDraft draft = session == null ? null : session.activeDraft();
+        AvailabilityResult availability = session == null ? null : session.latestAvailabilityResult();
+        if (isDateContextInspection(turn)) {
+            LocalDate date = hasDisplayedSlotPage(availability) ? availability.date()
+                    : draft != null && draft.preferredDate() != null ? draft.preferredDate()
+                    : availability == null ? null : availability.date();
+            if (date == null) return isEnglish(turn) ? "No date has been selected yet."
+                    : isHinglish(turn) ? "Abhi koi date select nahi hui hai."
+                    : "अभी कोई तारीख नहीं चुनी गई है।";
+            return isEnglish(turn) ? "The selected date is " + AivaSpokenDateFormatter.format(date,
+                    turn.responseLanguage(), turn.responseStyle()) + "."
+                    : isHinglish(turn) ? "Selected date " + AivaSpokenDateFormatter.format(date,
+                    turn.responseLanguage(), turn.responseStyle()) + " hai."
+                    : "चुनी हुई तारीख " + AivaSpokenDateFormatter.format(date,
+                    turn.responseLanguage(), turn.responseStyle()) + " है।";
+        }
+        LocalTime selected = draft == null ? null : draft.exactTime();
+        if (selected == null && draft != null && availability != null
+                && StringUtils.hasText(draft.selectedSlotReference())) {
+            selected = availability.slots().stream().filter(slot -> slot.slotReference().equals(draft.selectedSlotReference()))
+                    .map(AvailabilitySlot::startsAt).findFirst().orElse(null);
+        }
+        if (selected == null) return isEnglish(turn) ? "No appointment time has been selected yet."
+                : isHinglish(turn) ? "Abhi koi appointment time select nahi hua hai."
+                : "अभी कोई appointment समय नहीं चुना गया है।";
+        String time = spokenTime(selected, !isEnglish(turn), isHinglish(turn));
+        return isEnglish(turn) ? "The selected time is " + time + "."
+                : isHinglish(turn) ? "Selected time " + time + " hai."
+                : "चुना हुआ समय " + time + " है।";
+    }
+
+    private ProviderCandidate providerForAvailability(AvailabilityResult availability, SessionProjection session) {
+        if (availability == null || session == null) return null;
+        ProviderCandidate active = session.activeDraft() != null && session.activeDraft().selectedProvider() != null
+                ? session.activeDraft().selectedProvider() : session.activeVoiceDoctor();
+        if (active != null && availability.doctorId() != null
+                && availability.doctorId().equals(active.doctorId())) return active;
+        ProviderSearchResult providers = session.latestProviderResult();
+        if (providers == null) return null;
+        if (providers.resolvedProvider() != null && availability.doctorId() != null
+                && availability.doctorId().equals(providers.resolvedProvider().doctorId())) {
+            return providers.resolvedProvider();
+        }
+        return providers.candidates().stream().filter(candidate -> availability.doctorId() != null
+                && availability.doctorId().equals(candidate.doctorId())).findFirst().orElse(null);
     }
 
     private boolean isExplicitProviderSwitchRequest(SessionProjection session, NormalizedUserTurn turn) {
@@ -502,6 +690,18 @@ public class AivaV2VoiceConversationAdapter {
         return StringUtils.hasText(requested) && !requested.equals(current);
     }
 
+    private boolean looksLikeProviderChange(NormalizedUserTurn turn) {
+        String text = turn == null ? "" : (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
+        return text.matches("(?s).*(?:\\b(?:doctor|appointment|consult|specialty)\\b|डॉक्टर|अपॉइंटमेंट|"
+                + "बच्चे|बच्चों|बाल रोग|का appointment|के slots).*" );
+    }
+
+    private boolean sameCanonicalLabel(String left, String right) {
+        return StringUtils.hasText(left) && StringUtils.hasText(right)
+                && left.replaceAll("[^\\p{L}\\p{N}]", "").equalsIgnoreCase(
+                right.replaceAll("[^\\p{L}\\p{N}]", ""));
+    }
+
     private String normalizeProviderName(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT)
                 .replaceFirst("^dr\\.?\\s*", "").replaceAll("[^\\p{L}\\p{N}]", "").trim();
@@ -510,10 +710,51 @@ public class AivaV2VoiceConversationAdapter {
     private boolean isContextChangeCommand(NormalizedUserTurn turn) {
         if (turn == null) return false;
         String text = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
-        return text.matches("(?s).*(?:\\bchange\\s+(?:the\\s+)?doctor\\b|\\bswitch\\s+doctor\\b|"
+        return isChangeProviderCommand(turn) || text.matches("(?s).*(?:\\bchange\\s+(?:the\\s+)?doctor\\b|\\bswitch\\s+doctor\\b|"
+                + "\\bdoctor\\s+change\\s+(?:karo|करो|please)\\b|\\bi\\s+want\\s+to\\s+change\\s+doctor\\b|"
+                + "दूसरे\\s+डॉक्टर\\s+के\\s+slots\\s+दिखाओ|मुझे\\s+डॉक्टर\\s+बदलना\\s+है|"
                 + "\\bchange\\s+(?:the\\s+)?date\\b|\\bchange\\s+(?:the\\s+)?time\\b|"
-                + "doctor\\s+बदलना\\s+है|डॉक्टर\\s+बदलना\\s+है|तारीख\\s+बदलो|तारीख\\s+बदलनी\\s+है|"
-                + "समय\\s+बदलो|समय\\s+बदलना\\s+है).*" );
+                + "doctor\\s+(?:बदलना\\s+है|badalna\\s+hai)|डॉक्टर\\s+बदलना\\s+है|तारीख\\s+बदलो|तारीख\\s+बदलनी\\s+है|"
+                + "समय\\s+बदलो|समय\\s+बदलना\\s+है|daypart\\s+बदलना\\s+है).*" );
+    }
+
+    private boolean isChangeProviderCommand(NormalizedUserTurn turn) {
+        if (turn == null) return false;
+        String text = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
+        boolean explicit = text.matches("(?s).*(?:\\bchange\\s+(?:the\\s+)?doctor\\b|\\bswitch\\s+doctor\\b|"
+                + "\\bdoctor\\s+change\\s+(?:karo|करो|please)\\b|\\bi\\s+want\\s+to\\s+change\\s+doctor\\b|"
+                + "दूसरे\\s+डॉक्टर\\s+के\\s+slots\\s+दिखाओ|मुझे\\s+डॉक्टर\\s+बदलना\\s+है|"
+                + "(?:doctor|डॉक्टर)\\s+(?:बदलना\\s+है|badalna\\s+hai)|डॉक्टर\\s+बदल).*" );
+        return explicit || text.matches("(?s).*(?:doctor|डॉक्टर).{0,24}(?:change|badal|बदल).*" );
+    }
+
+    private boolean isProviderChangeRequest(NormalizedUserTurn turn) {
+        if (isChangeProviderCommand(turn)) return true;
+        if (turn == null) return false;
+        String raw = turn.rawText() == null ? "" : turn.rawText().toLowerCase(Locale.ROOT);
+        return (raw.contains("doctor") || raw.contains("डॉक्टर"))
+                && (raw.contains("बदल") || raw.contains("badal") || raw.contains("change"));
+    }
+
+    private boolean isGenericOrCurrentProviderEvidence(String evidence, ProviderCandidate activeProvider) {
+        if (!StringUtils.hasText(evidence) || evidence.matches("(?iu)\\s*(?:doctor|डॉक्टर)(?:\\s+(?:बदलना(?:\\s+है)?|badalna(?:\\s+hai)?|change(?:\\s+doctor)?))?\\s*")) return true;
+        return activeProvider != null && DoctorNameNormalizer.matches(activeProvider.displayName(), evidence);
+    }
+
+    private boolean isProviderChangeWithoutTarget(NormalizedUserTurn turn) {
+        return turn != null && isRawProviderChangeWithoutTarget(turn.rawText());
+    }
+
+    private boolean isRawProviderChangeWithoutTarget(String transcript) {
+        if (!StringUtils.hasText(transcript)) return false;
+        String raw = transcript.toLowerCase(Locale.ROOT);
+        return raw.matches("(?s).*\\bchange\\s+(?:the\\s+)?doctor\\s*[.!?।]*")
+                || raw.matches("(?s).*\\bswitch\\s+doctor\\s*[.!?।]*")
+                || raw.matches("(?s).*\\bi\\s+want\\s+to\\s+change\\s+doctor\\s*[.!?।]*")
+                || raw.matches("(?s).*(?:doctor|डॉक्टर)\\s+(?:बदलना\\s+है|badalna\\s+hai|change\\s+(?:karo|करो))\\s*[.!?।]*")
+                || raw.matches("(?s).*दूसरे\\s+डॉक्टर\\s+के\\s+slots\\s+दिखाओ\\s*[.!?।]*")
+                || raw.matches("(?s).*मुझे\\s+डॉक्टर\\s+बदलना\\s+है\\s*[.!?।]*")
+                || raw.matches("(?s).*डॉक्टर\\s+बदलना\\s+है\\s*[.!?।]*");
     }
 
     private boolean isRestartBookingRequest(NormalizedUserTurn turn) {
@@ -568,13 +809,79 @@ public class AivaV2VoiceConversationAdapter {
             turn = presentation.turn();
             if (isClosing(turn)) {
                 outcome.set(new GuestPreparationResult(closingResponse(turn), "END_CONVERSATION",
-                        Map.of("mutationAllowed", false, "toolsInvoked", false, "conversationClosed", true)));
+                        Map.of("mutationAllowed", false, "toolsInvoked", false, "conversationClosed", true,
+                                "draftCancelled", isPreparedBookingCancellation(current, turn))));
                 return current.close();
+            }
+            if (isPreparedBookingCancellation(current, turn)) {
+                SessionProjection cancelled = current.clearTransientWorkflow();
+                String response = isEnglish(turn) ? "Okay, I have stopped this booking request."
+                        : isHinglish(turn) ? "Theek hai, maine yeh booking request rok di hai."
+                        : "ठीक है, मैंने यह booking request रोक दी है।";
+                outcome.set(new GuestPreparationResult(response, "CURRENT_BOOKING_CANCELLED",
+                        Map.of("mutationAllowed", false, "toolsInvoked", false,
+                                "draftCancelled", true, "contextAction", "CANCEL_CURRENT_BOOKING")));
+                return cancelled;
+            }
+            if (isRepeatRequest(turn) && current.pendingConfirmation() == null) {
+                String repeated = repeatCurrentPrompt(current, turn);
+                if (repeated != null) {
+                    AvailabilityResult page = current.latestAvailabilityResult();
+                    int offset = page == null ? -1 : page.displayOffset();
+                    outcome.set(new GuestPreparationResult(repeated,
+                            hasDisplayedSlotPage(page) && AivaV2VoiceSlotContext.isAwaitSlot(current, Instant.now())
+                                    ? "REPEAT_SLOT_PAGE" : "REPEAT_CURRENT_PROMPT",
+                            Map.of("mutationAllowed", false, "toolsInvoked", false,
+                                    "decisionAction", hasDisplayedSlotPage(page) ? "REPEAT_SLOT_PAGE" : "REPEAT_CURRENT_PROMPT",
+                                    "repeatTarget", repeatTarget(current), "slotPageBefore", offset,
+                                    "slotPageAfter", offset, "contextPreserved", true)));
+                    return current;
+                }
+            }
+            if (isProviderContextInspection(turn) || isDateContextInspection(turn)
+                    || isSelectedSlotInspection(turn)) {
+                String response = contextInspectionResponse(current, turn);
+                outcome.set(new GuestPreparationResult(response, "READ_ONLY_CONTEXT_INSPECTION",
+                        Map.of("mutationAllowed", false, "toolsInvoked", false,
+                                "contextAction", isProviderContextInspection(turn) ? "INSPECT_PROVIDER"
+                                        : isDateContextInspection(turn) ? "INSPECT_DATE" : "INSPECT_SELECTED_SLOT",
+                                "contextPreserved", true)));
+                return current;
+            }
+            if (isDeclineCurrentSlotOptions(current, turn)) {
+                String response = isEnglish(turn)
+                        ? "No problem. You can ask for more slots, change the date or doctor, or stop this booking."
+                        : isHinglish(turn)
+                        ? "Theek hai. Aap aur slots, date ya doctor change kar sakte hain, ya booking rok sakte hain."
+                        : "ठीक है। आप और समय पूछ सकते हैं, तारीख या डॉक्टर बदल सकते हैं, या booking रोक सकते हैं।";
+                outcome.set(new GuestPreparationResult(response, "DECLINE_CURRENT_SLOT_OPTIONS",
+                        Map.of("mutationAllowed", false, "toolsInvoked", false,
+                                "contextPreserved", true, "decisionAction", "DECLINE_CURRENT_SLOT_OPTIONS")));
+                return current;
             }
             AvailabilityResult readOnlyAvailability = current.latestAvailabilityResult();
             AvailabilitySlot readOnlySelectedSlot = null;
+            if (awaitSlotContext && parsedTimeRange(turn) != null) {
+                NormalizedUserTurn rangeTurn = turn.daypart() == null && readOnlyAvailability != null
+                        ? turn.withDaypart(daypartFromWindow(readOnlyAvailability.timeWindow())) : turn;
+                String rangeValue = parsedTimeRange(rangeTurn);
+                AvailabilityTimeConstraint range = timeConstraint(rangeTurn, rangeValue, readOnlyAvailability);
+                if (range != null) {
+                    AivaV2Models.BookingPatch rangePatch = new AivaV2Models.BookingPatch(
+                            AivaV2Models.ValuePatch.unchanged(), AivaV2Models.ValuePatch.unchanged(),
+                            AivaV2Models.ValuePatch.unchanged(), AivaV2Models.ValuePatch.unchanged(),
+                            AivaV2Models.ValuePatch.clear(), AivaV2Models.ValuePatch.unchanged(),
+                            new AivaV2Models.AvailabilityTimeConstraintPatch(AivaV2Models.PatchMode.SET, range));
+                    slotContextDecision = collectionDecision(rangeTurn, rangePatch);
+                    log.info("VOICE_SLOT_CONTEXT_ACTION state=AWAIT_SLOT action=REFINE_TIME_RANGE "
+                                    + "rangeStart={} rangeEnd={} contextPreserved=true slotInvalidatedReason=TIME_RANGE_REFINED",
+                            range.startTime(), range.endTime());
+                }
+            }
             if (current.activeDraft() == null && hasRetainedReadOnlySlotPage(current)
-                    && !isShowMore(turn) && retainedSlotContextMatches(readOnlyAvailability, turn)
+                    && !isContextChangeCommand(turn) && !isShowMore(turn)
+                    && parsedTimeRange(turn) == null
+                    && retainedSlotContextMatches(readOnlyAvailability, turn)
                     && !hasConflictingProviderEvidence(current, turn)) {
                 AivaV2DisplayedSlotSelectionResolver.Resolution displayedSelection =
                         displayedSlotSelectionResolver.resolve(turn, readOnlyAvailability);
@@ -621,6 +928,97 @@ public class AivaV2VoiceConversationAdapter {
                     && pendingClarification.canonicalProviderCandidates().isEmpty();
             PendingProviderSwitch pendingSwitch = pendingClarification == null ? null
                     : pendingClarification.pendingProviderSwitch();
+            boolean globalContextControlResolved = false;
+            if (isRestartBookingRequest(turn)) {
+                SessionProjection reset = current.clearTransientWorkflow();
+                String response = isEnglish(turn) ? "Okay. We can start a new appointment request."
+                        : isHinglish(turn) ? "Theek hai. Hum nayi appointment request shuru kar sakte hain."
+                        : "ठीक है। हम नई appointment request शुरू कर सकते हैं।";
+                outcome.set(new GuestPreparationResult(response, "BOOKING_CONTEXT_RESET",
+                        Map.of("mutationAllowed", false, "contextAction", "RESET_BOOKING",
+                                "conversationControl", "START_OVER", "contextPreserved", false)));
+                return reset;
+            }
+            if (isProviderChangeRequest(turn)) {
+                if (isProviderChangeWithoutTarget(turn)
+                        || isGenericOrCurrentProviderEvidence(providerEvidence, activeBookingProvider)) {
+                    providerEvidence = null;
+                    turn = turn.withoutDoctorEvidence();
+                    current = clearSlotForProviderChange(current, context)
+                            .withVoiceClarificationState(contextChangeClarification("CHANGE_PROVIDER",
+                                    current.activeWorkflow()));
+                    outcome.set(new GuestPreparationResult(changeProviderPrompt(turn), "CONTEXT_CHANGE_CLARIFICATION",
+                            Map.of("mutationAllowed", false, "contextAction", "CHANGE_PROVIDER",
+                                    "pendingClarificationType", "CHANGE_PROVIDER", "slotInvalidatedReason",
+                                    "PROVIDER_CHANGE_REQUESTED", "contextPreserved", true)));
+                    return current;
+                }
+            } else if (isContextChangeCommand(turn)) {
+                String rawControl = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
+                if (rawControl.matches("(?s).*(?:change\\s+(?:the\\s+)?date|तारीख\\s+(?:बदलो|बदलनी)).*")) {
+                    if (turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                            && turn.temporal().localDate() != null) {
+                        current = clearSelectedSlotForContextChange(current).withVoiceClarificationState(null);
+                        pendingClarification = null;
+                        pendingSwitch = null;
+                        slotContextDecision = slotDateDecision(turn, turn.temporal().localDate());
+                        globalContextControlResolved = true;
+                    } else {
+                        current = clearSelectedSlotForContextChange(current).withVoiceClarificationState(
+                                contextChangeClarification("CHANGE_DATE", current.activeWorkflow()));
+                        outcome.set(new GuestPreparationResult(changeDatePrompt(turn), "CONTEXT_CHANGE_CLARIFICATION",
+                                Map.of("mutationAllowed", false, "contextAction", "CHANGE_DATE",
+                                        "pendingClarificationType", "CHANGE_DATE", "slotInvalidatedReason",
+                                        "DATE_CHANGE_REQUESTED", "contextPreserved", true)));
+                        return current;
+                    }
+                } else if (rawControl.matches("(?s).*(?:change\\s+(?:the\\s+)?time|समय\\s+(?:बदलो|बदलना)).*")) {
+                    if (turn.daypart() != null) {
+                        current = clearSelectedSlotForContextChange(current).withVoiceClarificationState(null);
+                        pendingClarification = null;
+                        pendingSwitch = null;
+                        slotContextDecision = slotDaypartDecision(turn, turn.daypart());
+                        globalContextControlResolved = true;
+                    } else {
+                        current = clearSelectedSlotForContextChange(current).withVoiceClarificationState(
+                                contextChangeClarification("CHANGE_DAYPART", current.activeWorkflow()));
+                        outcome.set(new GuestPreparationResult(changeDaypartPrompt(turn), "CONTEXT_CHANGE_CLARIFICATION",
+                                Map.of("mutationAllowed", false, "contextAction", "CHANGE_DAYPART",
+                                        "pendingClarificationType", "CHANGE_DAYPART", "slotInvalidatedReason",
+                                        "DAYPART_CHANGE_REQUESTED", "contextPreserved", true)));
+                        return current;
+                    }
+                }
+            }
+            String requestedSpecialty = specialty(turn);
+            if (awaitSlotContext && pendingSwitch == null && activeBookingProvider != null
+                    && StringUtils.hasText(requestedSpecialty)
+                    && !sameCanonicalLabel(requestedSpecialty, activeBookingProvider.specialty())
+                    && looksLikeProviderChange(turn)) {
+                ProviderSearchResult specialtyResolution = transactionalBoundary.resolveVoiceProviderSpecialty(
+                        context.tenantId(), requestedSpecialty);
+                if (specialtyResolution != null && specialtyResolution.status() == ResolutionStatus.AMBIGUOUS
+                        && !specialtyResolution.candidates().isEmpty()) {
+                    VoiceClarificationState identity = providerIdentityState(specialtyResolution.candidates(),
+                            context.tenantId(), current.activeWorkflow());
+                    current = current.withVoiceClarificationState(identity);
+                    outcome.set(new GuestPreparationResult(providerIdentityClarification(identity, turn),
+                            "PROVIDER_IDENTITY_AMBIGUOUS", providerIdentityDiagnostics(identity)));
+                    return current;
+                }
+                if (specialtyResolution != null && specialtyResolution.status() == ResolutionStatus.RESOLVED
+                        && specialtyResolution.resolvedProvider() != null) {
+                    ProviderCandidate target = transactionalBoundary.resolveVoiceBookingProvider(context.tenantId(),
+                            specialtyResolution.resolvedProvider());
+                    if (target != null && !sameProvider(activeBookingProvider, target)) {
+                        current = beginProviderSwitch(current, activeBookingProvider, target, turn, context);
+                        outcome.set(new GuestPreparationResult(providerSwitchWarning(activeBookingProvider,
+                                target, turn), "PROVIDER_SWITCH_CONFIRMATION_REQUIRED",
+                                providerSwitchDiagnostics(current)));
+                        return current;
+                    }
+                }
+            }
             boolean sameProviderReaffirmed = pendingSwitch == null && activeBookingProvider != null
                     && isSameProviderReaffirmation(activeBookingProvider, providerEvidence, turn);
             if (sameProviderReaffirmed && !hasExplicitTemporalOrDaypartEvidence(turn)
@@ -822,23 +1220,17 @@ public class AivaV2VoiceConversationAdapter {
                     return current;
                 }
             }
-            if (isRestartBookingRequest(turn)) {
-                SessionProjection reset = current.clearTransientWorkflow();
-                String response = isEnglish(turn) ? "Okay. We can start a new appointment request."
-                        : isHinglish(turn) ? "Theek hai. Hum nayi appointment request shuru kar sakte hain."
-                        : "ठीक है। हम नई appointment request शुरू कर सकते हैं।";
-                outcome.set(new GuestPreparationResult(response, "BOOKING_CONTEXT_RESET",
-                        Map.of("mutationAllowed", false, "contextAction", "RESET_BOOKING",
-                                "contextPreserved", false)));
-                return reset;
-            }
-            if (isContextChangeCommand(turn)) {
+            if (!globalContextControlResolved && isContextChangeCommand(turn)) {
                 String raw = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
-                if (raw.matches("(?s).*(?:change\\s+(?:the\\s+)?doctor|switch\\s+doctor|डॉक्टर\\s+बदल).*")) {
+                if (isChangeProviderCommand(turn)) {
+                    if (isGenericOrCurrentProviderEvidence(providerEvidence, activeBookingProvider)) {
+                        providerEvidence = null;
+                        turn = turn.withoutDoctorEvidence();
+                    }
                     if (!StringUtils.hasText(providerEvidence)) {
                         VoiceClarificationState changeProvider = contextChangeClarification("CHANGE_PROVIDER",
                                 current.activeWorkflow());
-                        current = clearSelectedSlotForContextChange(current).withVoiceClarificationState(changeProvider);
+                        current = clearSlotForProviderChange(current, context).withVoiceClarificationState(changeProvider);
                         String response = changeProviderPrompt(turn);
                         outcome.set(new GuestPreparationResult(response, "CONTEXT_CHANGE_CLARIFICATION",
                                 Map.of("mutationAllowed", false, "contextAction", "CHANGE_PROVIDER",
@@ -959,7 +1351,8 @@ public class AivaV2VoiceConversationAdapter {
                     return current;
                 }
             }
-            if (pendingClarification == null && awaitSlotContext && providerSwitchDecision == null) {
+            if (pendingClarification == null && awaitSlotContext && providerSwitchDecision == null
+                    && slotContextDecision == null) {
                 VoiceRecognitionResult slotRecognition = recognizeContextBoundControls(current, turn);
                 AivaV2DisplayedSlotSelectionResolver.Resolution currentPageSelection =
                         displayedSlotSelectionResolver.resolve(turn, current.latestAvailabilityResult());
@@ -1306,8 +1699,10 @@ public class AivaV2VoiceConversationAdapter {
                     turn.temporal().localDate(), turn.temporal().status(), turn.daypart(), turn.exactTime(), current.activeWorkflow());
             SessionProjection decisionContext = current;
             if (decisionContext.activeDraft() == null) {
-                decisionContext = decisionContext.withBookingDraft(AivaV2Models.BookingDraft.create(
-                        bookingContext.patientId(), decisionContext.tenantId(), Instant.now()));
+                AivaV2Models.BookingDraft fresh = AivaV2Models.BookingDraft.create(
+                        bookingContext.patientId(), decisionContext.tenantId(), Instant.now());
+                decisionContext = decisionContext.withBookingDraft(seedDraftFromReadOnlyContext(
+                        fresh, decisionContext, turn));
             }
             turn = bookingContinuationTurn(turn, decisionContext.activeDraft(), context.timezone());
             decisionContext = adoptActiveVoiceDoctor(decisionContext, turn, context);
@@ -1514,7 +1909,8 @@ public class AivaV2VoiceConversationAdapter {
         SessionProjection session = context == null ? null : sessionStore.find(sessionKey(context)).orElse(null);
         AivaV2VoiceResponseRenderer.Intent intent = voiceResponseIntent(session, result);
         String rendered = intent.type() == AivaV2VoiceResponseRenderer.Type.COMPATIBILITY
-                ? result.response() : responseRenderer.render(intent);
+                ? localizedCompatibilityResponse(result.response(), intent.presentationMode())
+                : responseRenderer.render(intent);
         diagnostics.put("responseIntent", intent.type().name());
         diagnostics.put("presentationMode", intent.presentationMode().name());
         diagnostics.put("ttsLanguage", ttsLanguage(intent.presentationMode()));
@@ -1537,6 +1933,17 @@ public class AivaV2VoiceConversationAdapter {
         if (errorCategory != null) diagnostics.put("errorCategory", errorCategory);
         return new GuestPreparationResult(rendered, result.result(), Map.copyOf(diagnostics),
                 result.completedBookingOutcome());
+    }
+
+    private String localizedCompatibilityResponse(String response, AivaV2Models.VoicePresentationMode mode) {
+        if (response == null || mode == null || mode == AivaV2Models.VoicePresentationMode.ENGLISH) return response;
+        if (response.equalsIgnoreCase("Select one of the current slots.")
+                || response.equalsIgnoreCase("Please select one of the current slots.")) {
+            return mode == AivaV2Models.VoicePresentationMode.HINGLISH
+                    ? "Dikhaaye gaye slots mein se ek choose kijiye."
+                    : "दिखाए गए समय में से कोई एक चुनिए।";
+        }
+        return response;
     }
 
     private AivaV2VoiceResponseRenderer.Intent voiceResponseIntent(SessionProjection session,
@@ -2138,6 +2545,36 @@ public class AivaV2VoiceConversationAdapter {
         return session;
     }
 
+    private AivaV2Models.BookingDraft seedDraftFromReadOnlyContext(AivaV2Models.BookingDraft draft,
+            SessionProjection session, NormalizedUserTurn turn) {
+        AvailabilityResult context = session == null ? null : session.latestAvailabilityResult();
+        if (context == null || context.date() == null
+                || context.expiresAt() != null && !context.expiresAt().isAfter(Instant.now())
+                || !isExplicitUserDateContext(context.cursor())) return draft;
+        ProviderCandidate active = session.activeVoiceDoctor();
+        if (active != null && StringUtils.hasText(context.doctorId())
+                && !active.doctorId().equals(context.doctorId())) return draft;
+        LocalDate date = turn != null && turn.temporal() != null
+                && turn.temporal().status() == NormalizedUserTurn.TemporalStatus.RESOLVED
+                ? turn.temporal().localDate() : null;
+        if (date == null) date = context.date();
+        String timeWindow = turn.daypart() == null ? context.timeWindow()
+                : turn.daypart().name().toLowerCase(Locale.ROOT);
+        log.info("VOICE_DISCOVERY_CONTEXT_SEEDED source=USER_SELECTED_DATE datePresent=true daypartPresent={} "
+                        + "providerBindingPresent={}", StringUtils.hasText(timeWindow),
+                StringUtils.hasText(context.doctorId()));
+        return new AivaV2Models.BookingDraft(draft.draftId(), draft.patientSubjectId(), draft.tenantScope(),
+                draft.selectedProvider(), draft.specialtyFilter(), date, timeWindow, null, null, null, null,
+                AivaV2Models.DraftStatus.COLLECTING, draft.revision(), draft.expiresAt(), null);
+    }
+
+    private boolean isExplicitUserDateContext(String cursor) {
+        return "VOICE_PROVIDER_AVAILABILITY_DATE".equals(cursor)
+                || "VOICE_CONFIRM_SCHEDULE".equals(cursor)
+                || cursor != null && (cursor.startsWith("VOICE_CONFIRM_SCHEDULE_DAYPART:")
+                || cursor.startsWith("VOICE_PENDING_CONSULTATION_"));
+    }
+
     private ProviderCandidate resolveAuthoritativeBookingProvider(AivaExecutionContext context,
                                                                    ProviderCandidate discovered) {
         if (discovered == null || transactionalBoundary == null || context == null || context.tenantId() == null) return null;
@@ -2153,13 +2590,44 @@ public class AivaV2VoiceConversationAdapter {
                                                   String transcript) {
         var adapter = languageAdapters.resolve(context.language(), transcript);
         LocalDate referenceDate = LocalDate.now(context.timezone());
+        // A no-target provider-change command is a control, not provider evidence.
+        // Normalize a fixed control phrase first so Hindi morphology such as
+        // "बदलना" can never become a spurious canonical doctor reference.
+        if (isRawProviderChangeWithoutTarget(transcript)) {
+            NormalizedUserTurn command = adapter.normalize("change doctor", referenceDate);
+            return copyWithRawText(command.withoutDoctorEvidence(), transcript);
+        }
         if (!hasBookingSlotPage(session) || !SLOT_PAGE_CONTROL.matcher(transcript).matches()) {
-            return adapter.normalize(transcript, referenceDate);
+            return contextualRelativeDate(adapter.normalize(transcript, referenceDate), session);
         }
         NormalizedUserTurn control = adapter.normalize("show more slots", referenceDate);
         return new NormalizedUserTurn(transcript, "show more slots", "show more slots",
                 control.languageCode(), null, false, List.of(DeterministicControl.SHOW_MORE_SLOTS),
                 control.responseLanguage(), control.responseStyle());
+    }
+
+    private NormalizedUserTurn copyWithRawText(NormalizedUserTurn turn, String rawText) {
+        return new NormalizedUserTurn(rawText, turn.normalizedText(), turn.selectionText(), turn.languageCode(),
+                turn.explicitDoctorReference(), turn.explicitLookupQualifierPresent(), turn.controls(),
+                turn.responseLanguage(), turn.responseStyle(), turn.canonicalSemanticText(), turn.doctorEntity(),
+                turn.specialtyEntity(), turn.temporal(), turn.exactTime(), turn.daypart(), turn.ordinal(),
+                turn.confirmation(), turn.pagination(), turn.intent());
+    }
+
+    private NormalizedUserTurn contextualRelativeDate(NormalizedUserTurn turn, SessionProjection session) {
+        if (turn == null || session == null || !isRelativeDateChain(turn.rawText())) return turn;
+        LocalDate base = session.activeDraft() != null && session.activeDraft().preferredDate() != null
+                ? session.activeDraft().preferredDate()
+                : session.latestAvailabilityResult() == null ? null : session.latestAvailabilityResult().date();
+        if (base == null) return turn.withoutDoctorEvidence();
+        return turn.withoutDoctorEvidence().withTemporal(new NormalizedUserTurn.TemporalFact(turn.rawText(),
+                NormalizedUserTurn.TemporalStatus.RESOLVED, base.plusDays(1),
+                NormalizedUserTurn.RelativeKind.TOMORROW, false));
+    }
+
+    private boolean isRelativeDateChain(String rawText) {
+        return StringUtils.hasText(rawText) && rawText.matches(
+                "(?iu).*?(?:उसके\\s+अगले\\s+दिन|एक\\s+दिन\\s+बाद|\\bnext\\s+day\\b).*" );
     }
 
     private boolean hasBookingSlotPage(SessionProjection session) {
@@ -2281,6 +2749,22 @@ public class AivaV2VoiceConversationAdapter {
                     "DETERMINISTIC_SESSION_ROUTER", false, 0L, null, false);
         }
         AvailabilityResult availability = session.latestAvailabilityResult();
+        if (hasBookingSlotPage(session) && parsedTimeRange(turn) != null) {
+            NormalizedUserTurn rangeTurn = turn.daypart() == null && availability != null
+                    ? turn.withDaypart(daypartFromWindow(availability.timeWindow())) : turn;
+            AvailabilityTimeConstraint range = timeConstraint(rangeTurn, parsedTimeRange(rangeTurn), availability);
+            if (range != null) {
+                AivaV2Models.BookingPatch patch = new AivaV2Models.BookingPatch(
+                        AivaV2Models.ValuePatch.unchanged(), AivaV2Models.ValuePatch.unchanged(),
+                        AivaV2Models.ValuePatch.unchanged(), AivaV2Models.ValuePatch.unchanged(),
+                        AivaV2Models.ValuePatch.clear(), AivaV2Models.ValuePatch.unchanged(),
+                        new AivaV2Models.AvailabilityTimeConstraintPatch(AivaV2Models.PatchMode.SET, range));
+                return new ConversationDecision(AivaV2Models.DECISION_SCHEMA_VERSION,
+                        AivaV2Models.DialogAct.PROVIDE_INFORMATION, AivaV2Models.Operation.UPDATE_BOOKING,
+                        patch, null, AivaV2Models.ConfirmationPolarity.NONE, AivaV2Models.TopicAction.CONTINUE,
+                        turn.responseLanguage(), 1d, "DETERMINISTIC_SLOT_RANGE_REFINEMENT", false, 0L, null, false);
+            }
+        }
         if (availability != null && "AIVA_BOOKING_PENDING_DAYPART".equals(availability.cursor())
                 && turn.daypart() != null && turn.exactTime() == null && !hasTimeRangeEvidence(turn)) {
             AivaV2Models.BookingPatch patch = new AivaV2Models.BookingPatch(
@@ -2765,6 +3249,14 @@ public class AivaV2VoiceConversationAdapter {
             PresentationTurn presentation = applyPresentationMode(session, turn);
             session = presentation.session();
             turn = presentation.turn();
+            if (isPreparedBookingCancellation(session, turn) && isClosing(turn)) {
+                TurnResult closed = new TurnResult(closingResponse(turn), "END_CONVERSATION", null,
+                        false, false, false, null, 0, "CANCEL_CURRENT_BOOKING_AND_CLOSE", true, turn,
+                        null, Map.of("mutationAllowed", false, "draftCancelled", true,
+                                "contextAction", "CANCEL_CURRENT_BOOKING", "conversationControl", "END_CONVERSATION"));
+                result.set(closed);
+                return execution(session.close(), closed);
+            }
             if (isClosing(turn)) {
                 logSemanticInput(context, turn, specialty(turn), "END_CONVERSATION", null, "COURTESY_CLOSE");
                 logContextTrace(context, turn, null, new DoctorResolution(null, "NOT_REQUIRED", List.of()),
@@ -2773,19 +3265,68 @@ public class AivaV2VoiceConversationAdapter {
                         false, false, false, null, 0, null, true, turn));
                 return execution(session.close(), result.get());
             }
-            if (isProviderContextInspection(turn)) {
+            if (isChangeProviderCommand(turn) && (session.activeDraft() != null
+                    || session.latestAvailabilityResult() != null)) {
+                SessionProjection changed = clearSlotForProviderChange(session, context)
+                        .withVoiceClarificationState(contextChangeClarification("CHANGE_PROVIDER",
+                                session.activeWorkflow()));
+                TurnResult change = new TurnResult(changeProviderPrompt(turn), "CONTEXT_CHANGE_CLARIFICATION",
+                        null, false, false, false, null, 0, "CHANGE_PROVIDER", false, turn, null,
+                        Map.of("mutationAllowed", false, "contextAction", "CHANGE_PROVIDER",
+                                "pendingClarificationType", "CHANGE_PROVIDER", "slotInvalidatedReason",
+                                "PROVIDER_CHANGE_REQUESTED", "contextPreserved", true));
+                result.set(change);
+                return execution(changed, change);
+            }
+            if (isRepeatRequest(turn)) {
+                String repeated = repeatCurrentPrompt(session, turn);
+                if (repeated != null) {
+                    AvailabilityResult page = session.latestAvailabilityResult();
+                    int offset = page == null ? -1 : page.displayOffset();
+                    String target = repeatTarget(session);
+                    String action = "SLOT_PAGE".equals(target) ? "REPEAT_SLOT_PAGE" : "REPEAT_CURRENT_PROMPT";
+                    Map<String, Object> diagnostics = Map.of("mutationAllowed", false,
+                            "contextAction", action, "repeatTarget", target,
+                            "slotPageBefore", offset, "slotPageAfter", offset, "contextPreserved", true);
+                    result.set(new TurnResult(repeated, action, null, false, false, false,
+                            null, 0, action, false, turn, null, diagnostics));
+                    log.info("VOICE_CONVERSATION_CONTROL conversationControl=REPEAT repeatTarget={} "
+                            + "slotPageBefore={} slotPageAfter={} contextPreserved=true", target, offset, offset);
+                    return execution(session, result.get());
+                }
+            }
+            if (isProviderContextInspection(turn) || isDateContextInspection(turn)
+                    || isSelectedSlotInspection(turn)) {
                 ProviderCandidate active = session.activeDraft() != null
                         && session.activeDraft().selectedProvider() != null
                         ? session.activeDraft().selectedProvider() : session.activeVoiceDoctor();
-                String response = active == null ? missingDoctorClarification(turn)
-                        : doctorOwnsSlotsResponse(active.displayName(), turn);
+                String response = contextInspectionResponse(session, turn);
+                String contextAction = isProviderContextInspection(turn) ? "INSPECT_PROVIDER"
+                        : isDateContextInspection(turn) ? "INSPECT_DATE" : "INSPECT_SELECTED_SLOT";
                 Map<String, Object> diagnostics = Map.of("mutationAllowed", false,
-                        "contextAction", "INSPECT_PROVIDER", "providerPresent", active != null);
-                TurnResult inspection = new TurnResult(response, active == null ? "CLARIFY_DOCTOR"
-                        : "ANSWER_PROVIDER_CONTEXT", null, false, false, false, null, 0,
+                        "contextAction", contextAction, "providerPresent", active != null);
+                String inspectionIntent = switch (contextAction) {
+                    case "INSPECT_DATE" -> "ANSWER_DATE_CONTEXT";
+                    case "INSPECT_SELECTED_SLOT" -> "ANSWER_SELECTED_SLOT_CONTEXT";
+                    default -> active == null ? "CLARIFY_DOCTOR" : "ANSWER_PROVIDER_CONTEXT";
+                };
+                TurnResult inspection = new TurnResult(response, inspectionIntent, null, false, false, false, null, 0,
                         "READ_ONLY_CONTEXT_INSPECTION", false, turn, null, diagnostics);
                 result.set(inspection);
                 return execution(session, inspection);
+            }
+            if (isDeclineCurrentSlotOptions(session, turn)) {
+                String response = isEnglish(turn)
+                        ? "No problem. You can ask for more slots, change the date or doctor, or stop this booking."
+                        : isHinglish(turn)
+                        ? "Theek hai. Aap aur slots, date ya doctor change kar sakte hain, ya booking rok sakte hain."
+                        : "ठीक है। आप और समय पूछ सकते हैं, तारीख या डॉक्टर बदल सकते हैं, या booking रोक सकते हैं।";
+                TurnResult declined = new TurnResult(response, "DECLINE_CURRENT_SLOT_OPTIONS", null,
+                        false, false, false, null, 0, "DECLINE_CURRENT_SLOT_OPTIONS", false, turn,
+                        null, Map.of("mutationAllowed", false, "contextPreserved", true,
+                                "conversationControl", "DECLINE_CURRENT_SLOT_OPTIONS"));
+                result.set(declined);
+                return execution(session, declined);
             }
             VoiceRecognitionResult recognition = recognizePendingClarification(session.voiceClarificationState(), turn);
             if (recognition == null) recognition = recognizeContextBoundControls(session, turn);
@@ -3303,6 +3844,10 @@ public class AivaV2VoiceConversationAdapter {
             int pageOffset = explicitMore && previousAvailability != null
                     ? previousAvailability.displayOffset() + previousAvailability.pageSize() : 0;
             if (queryType == null) queryType = QueryType.SLOT_AVAILABILITY;
+            if (turn.daypart() == null && previousAvailability != null) {
+                NormalizedUserTurn.Daypart retainedDaypart = daypartFromWindow(previousAvailability.timeWindow());
+                if (retainedDaypart != null && parsedTimeRange(turn) != null) turn = turn.withDaypart(retainedDaypart);
+            }
             String requestedRange = parsedTimeRange(turn);
             AvailabilityTimeConstraint requestedTimeConstraint = timeConstraint(turn, requestedRange,
                     explicitMore || pendingDate ? previousAvailability : null);
@@ -3414,7 +3959,8 @@ public class AivaV2VoiceConversationAdapter {
                     && (genericDoctorAvailability || previousAvailability != null
                     && "VOICE_PROVIDER_AVAILABILITY_DATE".equals(previousAvailability.cursor()))
                     && !consultationRequest) {
-                updated = updated.withVoiceAvailabilityResult(providerAvailabilityDateContext(date, context));
+                updated = updated.withVoiceAvailabilityResult(providerAvailabilityDateContext(date,
+                        requestedDaypart, context));
             }
             if (toolResult.availabilityResult() != null) {
                 updated = updated.withVoiceAvailabilityResult(toolResult.availabilityResult());
@@ -3629,6 +4175,7 @@ public class AivaV2VoiceConversationAdapter {
     }
 
     private boolean isExplicitSlotRequest(NormalizedUserTurn turn) {
+        if (parsedTimeRange(turn) != null) return true;
         String value = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
         return value.matches("(?s).*(?:\\bslots?\\b|स्लॉट|available\\s+slots|appointment\\s+slots|अपॉइंटमेंट स्लॉट).*" );
     }
@@ -4523,6 +5070,28 @@ public class AivaV2VoiceConversationAdapter {
         return session.withPendingBookingConfirmation(null, collecting).withVoiceAvailabilityResult(null);
     }
 
+    private SessionProjection clearSlotForProviderChange(SessionProjection session, AivaExecutionContext context) {
+        if (session == null || session.activeDraft() != null) return clearSelectedSlotForContextChange(session);
+        AvailabilityResult retained = session.latestAvailabilityResult();
+        if (retained == null || retained.date() == null
+                || retained.expiresAt() != null && !retained.expiresAt().isAfter(Instant.now())) {
+            return clearSelectedSlotForContextChange(session);
+        }
+        AvailabilityResult temporalContext = providerAvailabilityTemporalContext(retained.date(),
+                retained.timeWindow(), context);
+        return session.withPendingBookingConfirmation(null, null).withVoiceAvailabilityResult(temporalContext);
+    }
+
+    private AvailabilityResult providerAvailabilityTemporalContext(LocalDate date, String timeWindow,
+            AivaExecutionContext context) {
+        Instant now = Instant.now();
+        String zone = context == null || context.timezone() == null ? "Asia/Kolkata" : context.timezone().getId();
+        return new AvailabilityResult(UUID.randomUUID(), null, 0L,
+                "provider-change-date-context|" + (context == null ? "voice" : context.tenantId()) + "|" + date,
+                null, null, null, date, timeWindow, null, zone, List.of(),
+                "VOICE_PROVIDER_AVAILABILITY_DATE", false, now, now.plusSeconds(10 * 60), 0, 3);
+    }
+
     private VoiceClarificationState contextChangeClarification(String action, String resumeContext) {
         return new VoiceClarificationState(VoiceClarificationKind.MISSING_INFO, 0,
                 VoiceUnresolvedReason.MISSING_REQUIRED_INFO, List.of(), false, action,
@@ -4826,11 +5395,12 @@ public class AivaV2VoiceConversationAdapter {
         return null;
     }
 
-    private AvailabilityResult providerAvailabilityDateContext(LocalDate date, AivaExecutionContext context) {
+    private AvailabilityResult providerAvailabilityDateContext(LocalDate date,
+            NormalizedUserTurn.Daypart daypart, AivaExecutionContext context) {
         Instant now = Instant.now();
         return new AvailabilityResult(UUID.randomUUID(), null, 0L,
                 "provider-availability-date|" + context.tenantId() + "|" + date,
-                null, null, null, date, null, null,
+                null, null, null, date, daypart == null ? null : daypart.name().toLowerCase(Locale.ROOT), null,
                 context.timezone() == null ? "Asia/Kolkata" : context.timezone().getId(), List.of(),
                 "VOICE_PROVIDER_AVAILABILITY_DATE", false, now, now.plusSeconds(10 * 60), 0, 3);
     }
@@ -4848,6 +5418,7 @@ public class AivaV2VoiceConversationAdapter {
     }
 
     private boolean hasExplicitSlotEvidence(NormalizedUserTurn turn) {
+        if (parsedTimeRange(turn) != null) return true;
         String value = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
         boolean slotOrTiming = value.matches(".*(?:\\bslots?\\b|स्लॉट|\\btim(?:e|ing|ings)\\b|समय|टाइम).*" );
         boolean dayOrDate = turn.temporal().localDate() != null
@@ -4915,6 +5486,10 @@ public class AivaV2VoiceConversationAdapter {
     private String specialty(NormalizedUserTurn turn) {
         String raw = turn.specialtyEntity() == null ? turn.rawText() : turn.specialtyEntity().canonicalQuery();
         String utterance = (turn.rawText() + " " + turn.normalizedText()).toLowerCase(Locale.ROOT);
+        if (utterance.matches("(?s).*(?:\\bchild\\s+doctor\\b|\\bchildren's\\s+doctor\\b|"
+                + "बच्चे\\s+के\\s+डॉक्टर|बच्चों\\s+के\\s+डॉक्टर|बच्चों\\s+का\\s+डॉक्टर).*")) {
+            return "Pediatrics";
+        }
         if (utterance.matches("(?s).*(?:\\bgeneral\\s+medicine\\b|\\bgeneral\\s+physician\\b|\\bgeneral\\s+doctor\\b|\\bphysician\\b|"
                 + "जनरल\\s+मेडिसिन|जनरल\\s+फिजिशियन|जनरल\\s+डॉक्टर|सामान्य\\s+चिकित्सक).*")) return "General Medicine";
         if (utterance.matches("(?s).*(?:\\bpediatric(?:s|ian)?\\b|\\bpaediatric(?:s|ian)?\\b|"
@@ -4958,7 +5533,8 @@ public class AivaV2VoiceConversationAdapter {
                 + "धन्यवाद|शुक्रिया|ठीक है धन्यवाद|बस धन्यवाद|नहीं धन्यवाद|नही धन्यवाद|"
                 + "मुझे मदद नहीं चाहिए धन्यवाद|बस इतना ही|ठीक है|अलविदा|"
                 + "thik hai thanks|bas thank you|nahi thanks|nahin thanks|"
-                + "mujhe aur help nahi chahiye thanks|okay धन्यवाद)");
+                + "mujhe aur help nahi chahiye thanks|okay धन्यवाद)")
+                || raw.matches("(?iu).*(?:[, ]+)(?:thank you(?: ji)?|thanks(?: ji)?|धन्यवाद|शुक्रिया)$");
     }
 
     private String closingResponse(NormalizedUserTurn turn) {
@@ -5217,7 +5793,8 @@ public class AivaV2VoiceConversationAdapter {
         Integer end = spokenHour(endToken);
         if (start == null || end == null) return null;
         boolean explicitAfternoonPeriod = turn.daypart() == NormalizedUserTurn.Daypart.AFTERNOON
-                || turn.daypart() == NormalizedUserTurn.Daypart.EVENING;
+                || turn.daypart() == NormalizedUserTurn.Daypart.EVENING
+                || text.matches("(?s).*(?:रात|शाम|evening|night|afternoon).*" );
         // For an unqualified clinic-slot range in the common late-day band,
         // interpret 3–8 as PM; morning ranges remain available when explicitly named.
         boolean conventionalClinicPmRange = turn.daypart() == null && start >= 3 && end <= 8;

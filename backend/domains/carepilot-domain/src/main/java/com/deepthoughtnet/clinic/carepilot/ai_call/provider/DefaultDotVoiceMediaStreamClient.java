@@ -18,9 +18,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.Semaphore;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
@@ -39,6 +43,13 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
     private final ConcurrentHashMap<String, Boolean> inboundCallIds = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> inboundAnswered = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicBoolean> playbackLocks = new ConcurrentHashMap<>();
+    private final ScheduledThreadPoolExecutor playbackWriter = new ScheduledThreadPoolExecutor(1, r -> {
+        Thread thread = new Thread(r, "dotvoice-playback-writer-1");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final Semaphore playbackAdmission;
+    private final Semaphore controlWriteAdmission;
     private final ScheduledExecutorService reconnectScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "dotvoice-inbound-reconnect");
         thread.setDaemon(true);
@@ -70,6 +81,9 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.inboundHandlers = inboundHandlers == null ? List.of() : List.copyOf(inboundHandlers);
+        playbackWriter.setRemoveOnCancelPolicy(true);
+        playbackAdmission = new Semaphore(Math.max(1, properties == null ? 32 : properties.getPlaybackQueueCapacity()));
+        controlWriteAdmission = new Semaphore(Math.max(1, properties == null ? 32 : properties.getPlaybackQueueCapacity()));
     }
 
     @Override
@@ -116,6 +130,12 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
         reconnectScheduler.shutdownNow();
         listenerState = "DISCONNECTED";
         closeAllStreams();
+    }
+
+    @PreDestroy
+    public void shutdownPlaybackWriter() {
+        playbackWriter.shutdownNow();
+        reconnectScheduler.shutdownNow();
     }
 
     @Override
@@ -237,10 +257,10 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
         PreparedStream stream = activeStreams.get(providerCallId);
         if (stream != null && !stream.socket().isOutputClosed()) {
             try {
-                stream.socket().sendText(objectMapper.writeValueAsString(Map.of(
+                if (!sendTextSerially(stream.socket(), objectMapper.writeValueAsString(Map.of(
                         "event", "control",
                         "call_id", providerCallId,
-                        "action", "hangup")), true).join();
+                        "action", "hangup")))) throw new IllegalStateException("WEBSOCKET_SEND_FAILED");
                 log.info("DOTVOICE_HANGUP_SENT providerCallId={} transport=websocket", providerCallId);
                 return true;
             } catch (Exception ex) {
@@ -266,8 +286,8 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                 || inboundAnswered.containsKey(providerCallId)
                 || stream.socket().isOutputClosed()) return false;
         try {
-            stream.socket().sendText(objectMapper.writeValueAsString(Map.of(
-                    "event", "reject_call", "call_id", providerCallId)), true).join();
+            if (!sendTextSerially(stream.socket(), objectMapper.writeValueAsString(Map.of(
+                    "event", "reject_call", "call_id", providerCallId)))) return false;
             log.info("DOTVOICE_REJECT_CALL_SENT callId={}", providerCallId);
             return true;
         } catch (Exception ex) {
@@ -290,14 +310,26 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
             }
 
             @Override public CompletionStage<?> onText(WebSocket socket, CharSequence data, boolean last) {
+                long callbackStarted = System.nanoTime();
+                String callbackEvent = "fragment";
+                String callbackCallId = null;
                 try {
                     textBuffer.append(data);
-                    if (!last) return WebSocket.Listener.super.onText(socket, data, last);
+                    if (!last) {
+                        logCallback(callbackEvent, callbackCallId, callbackStarted);
+                        return WebSocket.Listener.super.onText(socket, data, last);
+                    }
                     int payloadLength = textBuffer.length();
                     JsonNode node = objectMapper.readTree(textBuffer.toString());
                     textBuffer.setLength(0);
                     String event = resolveEvent(node);
                     String callId = text(node, "call_id", "callId");
+                    callbackEvent = event;
+                    callbackCallId = callId;
+                    if (!"media".equalsIgnoreCase(event)) {
+                        log.info("DOTVOICE_CALLBACK_START eventType={} providerCallId={} threadName={}", event, callId,
+                                Thread.currentThread().getName());
+                    }
                     if (!"media".equalsIgnoreCase(event)) {
                         log.info("DOTVOICE_STREAM_EVENT event={} callId={} keys={}", event, callId, safeKeys(node));
                     }
@@ -305,7 +337,7 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                         ready.complete(true);
                     } else if ("incoming_call".equalsIgnoreCase(event)) {
                         if (StringUtils.hasText(callId)) {
-                            activeStreams.putIfAbsent(callId, new PreparedStream(socket, active));
+                            activeStreams.putIfAbsent(callId, new PreparedStream(socket, new AtomicReference<>()));
                             inboundCallIds.put(callId, true);
                             inboundHandlers.forEach(handler -> handler.onIncomingCall(
                                     callId, rawText(node, "from_number", "from", "caller", "caller_number"),
@@ -317,7 +349,12 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                     } else if ("stream_start".equalsIgnoreCase(event)) {
                         String direction = text(node, "direction");
                         log.info("DOTVOICE_STREAM_START_RECEIVED providerCallId={} direction={}", callId, direction);
-                        PlaybackContext context = active.get();
+                        PreparedStream callStream = StringUtils.hasText(callId) ? activeStreams.get(callId) : null;
+                        PlaybackContext context = callStream == null ? null : callStream.active().get();
+                        if (context == null) {
+                            PlaybackContext listenerContext = active.get();
+                            context = listenerContext != null && listenerContext.callId.equals(callId) ? listenerContext : null;
+                        }
                         if (context == null) {
                             if (StringUtils.hasText(callId)) {
                                 if (inboundCallIds.containsKey(callId) && !"inbound".equalsIgnoreCase(direction)) {
@@ -359,17 +396,27 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                             }
                         }
                     } else if ("stream_stop".equalsIgnoreCase(event)) {
+                        PlaybackContext stoppedPlayback = null;
                         if (StringUtils.hasText(callId)) {
                             log.info("DOTVOICE_STREAM_STOP_RECEIVED callId={}", callId);
+                            PreparedStream stoppedStream = activeStreams.get(callId);
+                            stoppedPlayback = stoppedStream == null ? null : stoppedStream.active().get();
+                            if (stoppedPlayback != null) {
+                                finishPlayback(stoppedStream, stoppedPlayback, true, null);
+                                stoppedPlayback.completion.complete(new PlaybackResult(true, "PLAYBACK_COMPLETED", null,
+                                        stoppedPlayback.sent.get(), text(node, "cause")));
+                                stoppedStream.active().compareAndSet(stoppedPlayback, null);
+                            }
                             inboundHandlers.forEach(handler -> handler.onStreamStop(callId, text(node, "cause")));
                             activeStreams.remove(callId);
                             inboundCallIds.remove(callId);
                             inboundAnswered.remove(callId);
+                            pendingStarts.remove(callId);
                         }
-                        if (active.get() != null
-                            && active.get().callId.equals(callId)) {
-                        PlaybackContext context = active.get();
-                        context.completion.complete(new PlaybackResult(true, "PLAYBACK_COMPLETED", null, context.sent.get(), text(node, "cause")));
+                        if (stoppedPlayback == null && active.get() != null && active.get().callId.equals(callId)) {
+                            PlaybackContext listenerContext = active.get();
+                            listenerContext.completion.complete(new PlaybackResult(true, "PLAYBACK_COMPLETED", null,
+                                    listenerContext.sent.get(), text(node, "cause")));
                     } else if (!isKnownEvent(event)) {
                         logUnknownEvent(node, event, callId, payloadLength);
                         }
@@ -378,6 +425,7 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
                     PlaybackContext context = active.get();
                     if (context != null) context.completion.complete(new PlaybackResult(false, "PLAYBACK_FAILED", "STREAM_DISCONNECTED", context.sent.get(), null));
                 }
+                logCallback(callbackEvent, callbackCallId, callbackStarted);
                 socket.request(1);
                 return WebSocket.Listener.super.onText(socket, data, last);
             }
@@ -428,6 +476,13 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
         };
     }
 
+    private void logCallback(String event, String callId, long startedAt) {
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        if ("media".equalsIgnoreCase(event) && elapsedMs < 20) return;
+        log.info("DOTVOICE_CALLBACK_END eventType={} providerCallId={} threadName={} elapsedMs={}", event, callId,
+                Thread.currentThread().getName(), elapsedMs);
+    }
+
     private void startPlayback(PreparedStream stream, PlaybackContext context, JsonNode node) {
         if (!context.started.compareAndSet(false, true)) return;
         inboundHandlers.forEach(handler -> handler.onStreamStart(context.callId));
@@ -447,34 +502,99 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
     }
 
     private void sendFrames(PreparedStream stream, PlaybackContext context, int frameDurationMs) {
-        WebSocket socket = stream.socket();
-        CompletableFuture.runAsync(() -> {
-            long startedAt = System.currentTimeMillis();
-            log.info("DOTVOICE_PLAYBACK_START providerCallId={} frameCount={} audioBytes={} frameDurationMs={}",
-                    context.callId, context.frames.size(), context.frames.size() * 160, frameDurationMs);
-            try {
-                for (int index = 0; index < context.frames.size(); index++) {
-                    byte[] frame = context.frames.get(index);
-                    socket.sendText(objectMapper.writeValueAsString(Map.of("event", "media", "call_id", context.callId,
-                            "audio", Base64.getEncoder().encodeToString(frame))), true).join();
-                    context.sent.incrementAndGet();
-                    int frameIndex = index + 1;
-                    if (frameIndex == 1 || frameIndex % 50 == 0 || frameIndex == context.frames.size()) {
-                        log.info("DOTVOICE_PLAYBACK_PROGRESS providerCallId={} frameIndex={} frameCount={} framesSent={}",
-                                context.callId, frameIndex, context.frames.size(), context.sent.get());
-                    }
-                    if (frameDurationMs > 0) Thread.sleep(frameDurationMs);
+        if (!playbackAdmission.tryAcquire()) {
+            log.warn("DOTVOICE_PLAYBACK_REJECTED providerCallId={} playbackId={} reason=writer_capacity activePlaybackCount={}",
+                    context.callId, context.playbackId, properties.getPlaybackQueueCapacity() - playbackAdmission.availablePermits());
+            finishPlayback(stream, context, false, "PLAYBACK_WRITER_REJECTED");
+            return;
+        }
+        context.admitted.set(true);
+        context.startedAt = System.currentTimeMillis();
+        context.frameDurationMs = Math.max(0, frameDurationMs);
+        log.info("DOTVOICE_PLAYBACK_SUBMITTED providerCallId={} playbackId={} frameCount={}",
+                context.callId, context.playbackId, context.frames.size());
+        schedulePlaybackFrame(stream, context);
+    }
+
+    private boolean sendTextSerially(WebSocket socket, String payload) {
+        if (!controlWriteAdmission.tryAcquire()) {
+            log.warn("DOTVOICE_SOCKET_WRITER_REJECTED reason=control_capacity queueCapacity={}",
+                    properties.getPlaybackQueueCapacity());
+            return false;
+        }
+        CompletableFuture<Boolean> sent = new CompletableFuture<>();
+        try {
+            playbackWriter.execute(() -> {
+                try {
+                    socket.sendText(payload, true).join();
+                    sent.complete(true);
+                } catch (RuntimeException ex) {
+                    sent.completeExceptionally(ex);
+                } finally {
+                    controlWriteAdmission.release();
                 }
-                log.info("DOTVOICE_PLAYBACK_COMPLETE providerCallId={} elapsedMs={} framesSent={}",
-                        context.callId, System.currentTimeMillis() - startedAt, context.sent.get());
-                inboundHandlers.forEach(handler -> handler.onPlaybackComplete(context.callId));
-            } catch (Exception ex) {
-                context.completion.complete(new PlaybackResult(false, "PLAYBACK_FAILED", "STREAM_DISCONNECTED", context.sent.get(), null));
-            } finally {
-                stream.active.compareAndSet(context, null);
-                releasePlayback(context.callId);
+            });
+        } catch (RuntimeException ex) {
+            controlWriteAdmission.release();
+            log.warn("DOTVOICE_SOCKET_WRITER_REJECTED reason=executor_shutdown queueCapacity={}",
+                    properties.getPlaybackQueueCapacity());
+            return false;
+        }
+        try { return sent.join(); }
+        catch (RuntimeException ex) { return false; }
+    }
+
+    private void schedulePlaybackFrame(PreparedStream stream, PlaybackContext context) {
+        try {
+            context.nextFrame.set(playbackWriter.schedule(() -> writePlaybackFrame(stream, context),
+                    context.sent.get() == 0 ? 0 : context.frameDurationMs, TimeUnit.MILLISECONDS));
+        } catch (RejectedExecutionException ex) {
+            finishPlayback(stream, context, false, "PLAYBACK_WRITER_REJECTED");
+        }
+    }
+
+    private void writePlaybackFrame(PreparedStream stream, PlaybackContext context) {
+        if (context.cancelled.get() || stream.socket().isOutputClosed()) {
+            finishPlayback(stream, context, false, "PLAYBACK_CANCELLED");
+            return;
+        }
+        if (context.sent.get() == 0) log.info("DOTVOICE_PLAYBACK_STARTED providerCallId={} playbackId={} frameCount={} writerThread={}",
+                context.callId, context.playbackId, context.frames.size(), Thread.currentThread().getName());
+        try {
+            int index = context.sent.get();
+            byte[] frame = context.frames.get(index);
+            stream.socket().sendText(objectMapper.writeValueAsString(Map.of("event", "media", "call_id", context.callId,
+                    "audio", Base64.getEncoder().encodeToString(frame))), true).join();
+            int sent = context.sent.incrementAndGet();
+            if (sent == context.frames.size()) {
+                finishPlayback(stream, context, true, null);
+            } else {
+                schedulePlaybackFrame(stream, context);
             }
-        });
+        } catch (Exception ex) {
+            finishPlayback(stream, context, false, "STREAM_DISCONNECTED");
+        }
+    }
+
+    private void finishPlayback(PreparedStream stream, PlaybackContext context, boolean success, String failure) {
+        if (!context.finished.compareAndSet(false, true)) return;
+        ScheduledFuture<?> next = context.nextFrame.getAndSet(null);
+        if (next != null) next.cancel(false);
+        if (!success) stream.active().compareAndSet(context, null);
+        if (success) {
+            log.info("DOTVOICE_PLAYBACK_FINISHED providerCallId={} playbackId={} frameCount={} elapsedMs={} writerThread={}",
+                    context.callId, context.playbackId, context.sent.get(), System.currentTimeMillis() - context.startedAt,
+                    Thread.currentThread().getName());
+            inboundHandlers.forEach(handler -> handler.onPlaybackComplete(context.callId));
+        } else {
+            log.warn("DOTVOICE_PLAYBACK_FINISHED providerCallId={} playbackId={} frameCount={} elapsedMs={} status=FAILED failure={} writerThread={}",
+                    context.callId, context.playbackId, context.sent.get(), System.currentTimeMillis() - context.startedAt, failure,
+                    Thread.currentThread().getName());
+            context.completion.complete(new PlaybackResult(false, "PLAYBACK_FAILED", failure, context.sent.get(), null));
+            inboundHandlers.forEach(handler -> handler.onPlaybackPreparationFailed(context.callId));
+        }
+        if (context.admitted.compareAndSet(true, false)) playbackAdmission.release();
+        releasePlayback(context.callId);
     }
 
     private void releasePlayback(String providerCallId) {
@@ -528,6 +648,11 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
     private void closeAllStreams() {
         closePrepared();
         activeStreams.values().forEach(stream -> {
+            PlaybackContext context = stream.active().get();
+            if (context != null) {
+                context.cancelled.set(true);
+                finishPlayback(stream, context, false, "LISTENER_SHUTDOWN");
+            }
             try { stream.socket().sendClose(WebSocket.NORMAL_CLOSURE, "shutdown"); } catch (RuntimeException ignored) { }
         });
         activeStreams.clear();
@@ -613,6 +738,13 @@ public class DefaultDotVoiceMediaStreamClient implements DotVoiceMediaStreamClie
         private final CompletableFuture<PlaybackResult> completion;
         private final AtomicBoolean started = new AtomicBoolean();
         private final AtomicInteger sent = new AtomicInteger();
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final AtomicBoolean finished = new AtomicBoolean();
+        private final AtomicBoolean admitted = new AtomicBoolean();
+        private final AtomicReference<ScheduledFuture<?>> nextFrame = new AtomicReference<>();
+        private final String playbackId = java.util.UUID.randomUUID().toString();
+        private volatile long startedAt;
+        private volatile int frameDurationMs;
         private PlaybackContext(String callId, List<byte[]> frames, CompletableFuture<PlaybackResult> completion) {
             this.callId = callId; this.frames = frames; this.completion = completion;
         }
